@@ -108,7 +108,9 @@ jobs:
             --out dist \
             --app-version "${{ steps.version.outputs.num_version }}" \
             --build "${GITHUB_RUN_NUMBER}"
-          ls -lR dist | head -40
+          # No pipes into head here: with `pipefail`, a closed pipe would fail the step.
+          ls -l dist
+          du -sh dist/* 2>/dev/null || true
 
       - name: Archive macOS app
         if: runner.os == 'macOS'
