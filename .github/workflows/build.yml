@@ -194,6 +194,10 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # The test report rides along with the build's artifacts; a release ships packages only.
+      - name: Drop the test report
+        run: rm -f dist/junit.xml
+
       - name: Checksums
         run: |
           set -euo pipefail
