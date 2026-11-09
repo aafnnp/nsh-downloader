@@ -175,7 +175,7 @@ jobs:
       # machine: the script serves the fixtures, grants /tmp for the run, and
       # restores nsh.json afterwards.
       - name: Run engine tests
-        run: tools/run-e2e.sh
+        run: bash tools/run-e2e.sh
 
   release:
     name: Publish release
