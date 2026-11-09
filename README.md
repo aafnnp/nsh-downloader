@@ -1,5 +1,8 @@
 # Downloader
 
+[![Build](https://github.com/aafnnp/nsh-downloader/actions/workflows/build.yml/badge.svg)](https://github.com/aafnnp/nsh-downloader/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/aafnnp/nsh-downloader)](https://github.com/aafnnp/nsh-downloader/releases)
+
 用 [Native Shell](https://nsh.dev)（`nsh`）的 TSX 写法写的桌面下载管理器：视频、音频、压缩包、镜像、文档都能下，界面是各平台的原生控件（macOS 上是 AppKit，Windows 是 Win32/Direct2D，Linux 是 GTK 4），不是套壳网页。
 
 > 一个 nsh 工程、一份 TSX，`nsh run` 直接看效果，`nsh package` 出 macOS / Windows / Linux 安装包，顺带还能出一个网页预览版。
@@ -79,7 +82,7 @@ nsh package App.tsx --target linux                  # 目录 + .tar.gz
 nsh package App.tsx --target web                    # 静态站点
 ```
 
-想用多线程下载，装一下 aria2 即可，应用会在启动时自动发现：
+想用多线程下载和磁力链接，装一下 aria2 即可，应用会在启动时自动发现：
 
 ```sh
 brew install aria2        # macOS
@@ -169,6 +172,16 @@ tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代�
 ```
 
 `tools/run-e2e.sh` 会起三个本地服务——HTTP 文件服务器、只服务 `blocked.test` 的代理、带 tracker 与做种者的 BitTorrent swarm——临时在 `nsh.json` 里给 `/tmp` 读写权限（headless 引擎默认不给文件系统），跑完自动还原，并打印 sha256 对照。代理用例的正负两半（走代理能下、不走代理失败）保证「真走了代理」而不是碰巧成功。
+
+## 发布
+
+打一个 tag 就会出四个平台的包并生成 Release：
+
+```sh
+git tag v1.0.1 && git push origin v1.0.1
+```
+
+最新一次：<https://github.com/aafnnp/nsh-downloader/releases/tag/v1.0.0>（macOS arm64 / Windows x64 / Linux x64 / Web，附 `SHA256SUMS.txt`）。
 
 ## 持续集成
 
