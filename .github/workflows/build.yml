@@ -1,0 +1,237 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned: a package carries the runtime of the CLI that built it.
+  NSH_VERSION: v0.4.0
+
+jobs:
+  check:
+    name: Check and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NSH
+        run: |
+          curl -fsSL https://nsh.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Type check
+        run: nsh check
+
+      - name: Bundle (read every warning)
+        run: nsh build
+
+      - name: Headless tests
+        run: nsh test --junit junit.xml
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit
+          path: junit.xml
+          if-no-files-found: ignore
+
+  package:
+    name: Package ${{ matrix.name }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-15
+            target: macos
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: linux
+          - name: windows-x86_64
+            os: windows-2022
+            target: windows
+          - name: web
+            os: ubuntu-24.04
+            target: web
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NSH (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://nsh.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install NSH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://nsh.dev/install.ps1 | iex
+          "$env:LOCALAPPDATA\nsh\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json;print(json.load(open("nsh.json"))["version"])')"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${base}+g$(git rev-parse --short HEAD)"
+          fi
+          num_version="${version%%+*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "num_version=$num_version" >> "$GITHUB_OUTPUT"
+          echo "Building $version (version field $num_version)"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          nsh package App.tsx \
+            --target "${{ matrix.target }}" \
+            --out dist \
+            --app-version "${{ steps.version.outputs.num_version }}" \
+            --build "${GITHUB_RUN_NUMBER}"
+          ls -lR dist | head -40
+
+      - name: Archive macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/Downloader.app" \
+            "dist/Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.zip"
+          rm -rf "dist/Downloader.app"
+
+      - name: Archive Windows app
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "dist/Downloader.zip" "dist/Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.zip"
+          rm -rf "dist/Downloader"
+
+      - name: Archive Linux app
+        if: matrix.target == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "dist/Downloader.tar.gz" "dist/Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.tar.gz"
+          rm -rf "dist/Downloader"
+
+      - name: Archive web site
+        if: matrix.target == 'web'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          zip -qr "Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.zip" Downloader
+          rm -rf Downloader
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloader-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  e2e:
+    name: Engine end-to-end (macOS host)
+    if: github.event_name == 'workflow_dispatch'
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NSH
+        run: |
+          curl -fsSL https://nsh.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install aria2
+        run: brew install aria2
+
+      # Real downloads, HLS segments, a proxy, and a BitTorrent swarm on this
+      # machine: the script serves the fixtures, grants /tmp for the run, and
+      # restores nsh.json afterwards.
+      - name: Run engine tests
+        run: tools/run-e2e.sh
+
+  release:
+    name: Publish release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          {
+            echo "## ${GITHUB_REF_NAME}"
+            echo
+            echo "Downloader 桌面版：macOS、Windows、Linux，另附网页预览版。"
+            echo
+            echo "- 浏览器扩展：仓库的 \`extension/\` 目录，按 README 载入即可。"
+            echo "- macOS 包为临时签名，首次打开请右键 → 打开。"
+            echo
+            if [ -n "$previous" ]; then
+              echo "### 变更"
+              echo
+              git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME"
+            else
+              git log --no-merges --pretty='- %s' | head -40
+            fi
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Downloader ${GITHUB_REF_NAME#v}" \
+              --notes-file notes.md
+          fi

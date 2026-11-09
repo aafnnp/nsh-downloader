@@ -1,0 +1,20 @@
+# nsh generates these
+.nsh/
+target/
+
+# build output
+dist/
+*.nshpkg
+
+# test and packaging leftovers
+junit.xml
+nsh.json.e2e.bak
+server.log
+
+# tooling
+node_modules/
+.venv/
+__pycache__/
+
+# macOS
+.DS_Store

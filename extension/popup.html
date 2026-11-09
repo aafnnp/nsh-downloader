@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Downloader</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <img src="icons/48.png" alt="" width="22" height="22" />
+      <div class="titles">
+        <strong>Downloader</strong>
+        <span id="subtitle">正在嗅探本页资源…</span>
+      </div>
+      <button id="clear" class="ghost" title="清空列表">清空</button>
+    </header>
+
+    <ul id="list" class="list"></ul>
+    <p id="empty" class="empty" hidden>
+      还没有发现可下载的资源。<br />
+      播放一下视频，或刷新页面再试。
+    </p>
+
+    <footer class="bar actions">
+      <label class="select-all"><input type="checkbox" id="all" /> 全选</label>
+      <div class="spacer"></div>
+      <button id="copy-selected" class="primary">复制选中</button>
+      <button id="copy-all" class="ghost">复制全部</button>
+    </footer>
+    <p class="hint">复制后，Downloader 会在大约 2 秒内自动加入队列。</p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
