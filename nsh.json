@@ -3,6 +3,9 @@
   "id": "dev.nsh.downloader",
   "version": "1.1.0",
   "build": 1,
+  "updater": {
+    "github": "aafnnp/nsh-downloader"
+  },
   "icon": "icon.png",
   "appearance": "system",
   "theme": "theme.json",
@@ -26,6 +29,11 @@
       ]
     },
     "clipboard": true,
+    "openUrl": {
+      "schemes": [
+        "https"
+      ]
+    },
     "process": {
       "execute": [
         "curl",

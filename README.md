@@ -59,6 +59,10 @@
 - 「高级」里可加任意请求头（`Cookie`、`User-Agent`…），对付防盗链和需要登录态的直接链接。
 - 分享页链接会明确提示「这是分享页而不是直链」，不会假装能解析。
 
+**自动更新**
+- 打包版启动后向 GitHub Releases 检查新版本；设置 → 关于 里有当前版本、检查更新、下载进度与「下载并安装」。
+- 安装完自动重启进入新版本；iOS / Android 等不能自替换的平台会改为打开发布页。开发运行和网页版不检查更新。
+
 **其它**
 - 记录与设置持久化，重启后恢复队列（未完成的标为已暂停）。
 - 搜索文件名 / 链接 / 备注；支持多选、全选、批量开始 / 暂停 / 移除。
@@ -242,6 +246,7 @@ lib/
   paths.ts          目录、唯一文件名、打开与定位
   urls.ts           链接归一化、文件名推导、剪贴板载荷解析
   netdisk.ts        网盘直链识别与 Referer 规则
+  update.ts         nsh/updater 的检查、下载、安装与状态
   format.ts         大小、速度、ETA 格式化
 components/
   TopBar.tsx        标题栏与工具栏
@@ -256,13 +261,13 @@ pages/
 extension/          浏览器扩展（MV3，无需构建）
 e2e/                真机引擎测试（不进默认测试集）
 tools/              图标生成、aria2 sidecar 准备与打包脚本、e2e 的 HTTP 服务 / 代理 / BitTorrent swarm
-.github/workflows/  类型检查 + 测试 + 三平台打包 + tag 发布
+.github/workflows/  类型检查 + 测试 + 全平台打包 + tag 发布与更新清单
 ```
 
 ## 测试
 
 ```sh
-nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 打包（27 个用例）
+nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 打包（29 个用例）
 tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代理、磁力（需本机 curl，磁力需 aria2c）
 ```
 
@@ -272,7 +277,7 @@ tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代�
 
 ## 发布
 
-打一个 tag 就会出四个平台的包并生成 Release：
+打一个 tag 就会出七个产物（macOS / Linux / Windows 各两种架构，加网页预览版）并生成 Release：
 
 ```sh
 git tag v1.1.0 && git push origin v1.1.0
@@ -280,13 +285,15 @@ git tag v1.1.0 && git push origin v1.1.0
 
 最新一次：<https://github.com/aafnnp/nsh-downloader/releases>
 
+`nsh.json` 的 `"updater": { "github": "aafnnp/nsh-downloader" }` 让 `nsh package` 额外写出自动更新包；发布任务用 `nsh update-manifest` 汇总成 `latest.json`，和安装包一起上传。因此 **tag 必须与 `nsh.json` 的 `version` 一致**（发布任务会检查）。应用内「设置 → 关于 → 检查更新」读取这份清单，下载后自替换并重启。
+
 ## 持续集成
 
 [.github/workflows/build.yml](./.github/workflows/build.yml)：
 
 - `check`：`nsh check` → `nsh build`（警告即问题）→ `nsh test`，输出 JUnit。
-- `package`：macOS（arm64）、Windows（x86_64）、Linux（x86_64）、Web 四个产物；桌面目标都走 `tools/package.sh`（先准备该目标的 sidecar，再 `nsh package` 打进 `.app` / `.zip` / `.tar.gz`，最后还原 stub），CI 与本地是同一条命令。
-- `release`：打 `v*` tag 时汇总产物、生成 `SHA256SUMS.txt` 与变更说明，用 `gh release` 发布。
+- `package`：macOS（arm64 / x86_64）、Linux（x86_64 / aarch64）、Windows（x86_64 / arm64）、Web 共七个产物；桌面目标都走 `tools/package.sh`（先准备该目标的 sidecar，再 `nsh package` 打进 `.app` / `.zip` / `.tar.gz`，最后还原 stub），CI 与本地是同一条命令。Windows arm64 没有官方 aria2c 构建，因此不带 sidecar，回退到系统引擎。
+- `release`：打 `v*` tag 时汇总产物、用 `nsh update-manifest` 生成 `latest.json`、生成 `SHA256SUMS.txt` 与变更说明，用 `gh release` 发布。
 - `e2e`：手动触发的 macOS 真机引擎测试。
 
 macOS 包是临时签名（ad hoc），首次打开需要右键 → 打开。
@@ -297,6 +304,8 @@ macOS 包是临时签名（ad hoc），首次打开需要右键 → 打开。
 - 直接 `nsh package` 不会自动准备 sidecar；没有 sidecar 的包会回退到系统 aria2c / curl。
 - 内置引擎单文件上限 8 MB，见上文；装 curl / aria2c 就没有这个限制。
 - 磁力与本地 `.torrent` 必须有 aria2c；没有时会直接说明要装什么，而不是排队后失败。
+- Windows arm64 包不带 aria2c（官方没有 arm64 构建），需要系统安装 aria2c 才有多线程与磁力。
+- 应用内更新只认 GitHub Releases；macOS 自替换仍受 Gatekeeper 限制，第一次打开新版本可能需要右键 → 打开。
 - 内置 fetch 引擎与 HLS/DASH 分片不支持应用内代理，只跟随系统代理。
 - 需要登录态的网盘必须自己提供直链和 Cookie，本应用不替你做鉴权或绕过分享限制。
 - HLS 目前取主列表里码率最高的一路；多音轨、字幕轨没有单独合并。

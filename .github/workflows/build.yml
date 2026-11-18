@@ -28,7 +28,7 @@ jobs:
 
       - name: Install NSH
         run: |
-          curl -fsSL https://nsh.dev/install.sh | sh
+          curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Type check
@@ -58,15 +58,43 @@ jobs:
           - name: macos-arm64
             os: macos-15
             target: macos
+            arch: arm64
+            nsh_arch: aarch64
+            package_args: --arch arm64
+          - name: macos-x86_64
+            os: macos-15-intel
+            target: macos
+            arch: x86_64
+            nsh_arch: x86_64
+            package_args: --arch x86_64
           - name: linux-x86_64
             os: ubuntu-24.04
             target: linux
+            arch: x86_64
+            nsh_arch: x86_64
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: linux
+            arch: aarch64
+            nsh_arch: aarch64
           - name: windows-x86_64
             os: windows-2022
             target: windows
+            arch: x86_64
+            nsh_arch: x86_64
+          - name: windows-aarch64
+            os: windows-11-arm
+            target: windows
+            arch: aarch64
+            nsh_arch: aarch64
+            # aria2 ships no official arm64 Windows build; this target uses the system engine.
+            skip_aria2: "1"
           - name: web
             os: ubuntu-24.04
             target: web
+            arch: ""
+            nsh_arch: ""
+            skip_aria2: "1"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -113,18 +141,21 @@ jobs:
       # out of the asset list, packages, and restores the committed stub.
       - name: Package
         shell: bash
+        env:
+          SKIP_ARIA2: ${{ matrix.skip_aria2 }}
         run: |
           set -euo pipefail
           bash tools/package.sh "${{ matrix.target }}" \
             --out dist \
             --app-version "${{ steps.version.outputs.num_version }}" \
-            --build "${GITHUB_RUN_NUMBER}"
+            --build "${GITHUB_RUN_NUMBER}" \
+            ${{ matrix.package_args }}
           # No pipes into head here: with `pipefail`, a closed pipe would fail the step.
           ls -l dist
           du -sh dist/* 2>/dev/null || true
 
-      - name: Check the bundled aria2c (Windows)
-        if: matrix.target == 'windows'
+      - name: Check the bundled aria2c (Windows x86_64)
+        if: matrix.target == 'windows' && matrix.skip_aria2 != '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -133,30 +164,36 @@ jobs:
           "$exe" --version
 
       - name: Archive macOS app
-        if: runner.os == 'macOS'
+        if: matrix.target == 'macos'
         shell: bash
         run: |
           set -euo pipefail
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/Downloader.app" \
-            "dist/Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.zip"
+            "dist/Downloader-${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}.zip"
           rm -rf "dist/Downloader.app"
 
-      - name: Archive Windows app
-        if: runner.os == 'Windows'
+      # `nsh package` writes the updater archive next to the portable app; it is
+      # the file `nsh update-manifest` reads, so keep it and drop the duplicate.
+      - name: Keep the Windows update archive
+        if: matrix.target == 'windows'
         shell: bash
         run: |
           set -euo pipefail
-          mv "dist/Downloader.zip" "dist/Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.zip"
-          rm -rf "dist/Downloader"
+          update="dist/Downloader-${{ steps.version.outputs.num_version }}-windows-${{ matrix.nsh_arch }}.zip"
+          test -f "$update"
+          rm -rf "dist/Downloader" "dist/Downloader.zip"
+          test -f "$update"
 
-      - name: Archive Linux app
+      - name: Keep the Linux update archive
         if: matrix.target == 'linux'
         shell: bash
         run: |
           set -euo pipefail
-          mv "dist/Downloader.tar.gz" "dist/Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.tar.gz"
-          rm -rf "dist/Downloader"
+          update="dist/Downloader-${{ steps.version.outputs.num_version }}-linux-${{ matrix.nsh_arch }}.tar.gz"
+          test -f "$update"
+          rm -rf "dist/Downloader" "dist/Downloader.tar.gz"
+          test -f "$update"
 
       - name: Archive web site
         if: matrix.target == 'web'
@@ -164,7 +201,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          zip -qr "Downloader-${{ steps.version.outputs.version }}-${{ matrix.name }}.zip" Downloader
+          zip -qr "Downloader-${{ steps.version.outputs.version }}-web.zip" Downloader
           rm -rf Downloader
 
       - name: Upload package
@@ -185,7 +222,7 @@ jobs:
 
       - name: Install NSH
         run: |
-          curl -fsSL https://nsh.dev/install.sh | sh
+          curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install aria2
@@ -209,14 +246,83 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install NSH
+        run: |
+          curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - uses: actions/download-artifact@v4
         with:
+          pattern: downloader-*
           path: dist
           merge-multiple: true
 
-      # The test report rides along with the build's artifacts; a release ships packages only.
-      - name: Drop the test report
-        run: rm -f dist/junit.xml
+      # `nsh update-manifest` reads nsh.json, so the tag and its version must agree.
+      - name: Verify the release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json;print(json.load(open("nsh.json"))["version"])')"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$base" != "$tag" ]; then
+            echo "nsh.json 的 version 是 $base，tag 是 $tag；先同步版本再发布。" >&2
+            exit 1
+          fi
+
+      # The release ships the package artifacts only; the test report stays with its job.
+      - name: Release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          changes="$RUNNER_TEMP/changes.md"
+          {
+            echo "### 变更"
+            echo
+            if [ -n "$previous" ]; then
+              git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME"
+            else
+              git log --no-merges --pretty='- %s' -40
+            fi
+          } > "$changes"
+          {
+            echo "## ${GITHUB_REF_NAME}"
+            echo
+            echo "Downloader 桌面版：macOS（Apple 芯片 / Intel）、Windows（x86_64 / arm64）、Linux（x86_64 / aarch64），另附网页预览版。"
+            echo
+            echo "- 浏览器扩展：仓库的 \`extension/\` 目录，按 README 载入即可。"
+            echo "- macOS 包为临时签名，首次打开请右键 → 打开。"
+            echo "- 应用内更新读取这个 Release 的 \`latest.json\`。"
+            echo
+            cat "$changes"
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      # The manifest names the same archives the release ships; unsigned is fine
+      # because `updater.github` trusts only this repository's releases.
+      - name: Generate the update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          archives=(
+            "dist/Downloader-$version-macos-aarch64.tar.gz"
+            "dist/Downloader-$version-macos-x86_64.tar.gz"
+            "dist/Downloader-$version-linux-aarch64.tar.gz"
+            "dist/Downloader-$version-linux-x86_64.tar.gz"
+            "dist/Downloader-$version-windows-aarch64.zip"
+            "dist/Downloader-$version-windows-x86_64.zip"
+          )
+          for archive in "${archives[@]}"; do
+            if [ ! -f "$archive" ]; then
+              echo "缺少自动更新包：$archive" >&2
+              exit 1
+            fi
+          done
+          nsh update-manifest "${archives[@]}" \
+            --notes "$RUNNER_TEMP/changes.md" \
+            -o dist
+          cat dist/latest.json
 
       - name: Checksums
         run: |
@@ -225,39 +331,18 @@ jobs:
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Release notes
-        run: |
-          set -euo pipefail
-          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
-          {
-            echo "## ${GITHUB_REF_NAME}"
-            echo
-            echo "Downloader 桌面版：macOS、Windows、Linux，另附网页预览版。"
-            echo
-            echo "- 浏览器扩展：仓库的 \`extension/\` 目录，按 README 载入即可。"
-            echo "- macOS 包为临时签名，首次打开请右键 → 打开。"
-            echo
-            if [ -n "$previous" ]; then
-              echo "### 变更"
-              echo
-              git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME"
-            else
-              git log --no-merges --pretty='- %s' | head -40
-            fi
-          } > notes.md
-          cat notes.md
-
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          notes="$RUNNER_TEMP/notes.md"
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
             gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* \
               --repo "$GITHUB_REPOSITORY" \
               --title "Downloader ${GITHUB_REF_NAME#v}" \
-              --notes-file notes.md
+              --notes-file "$notes"
           fi

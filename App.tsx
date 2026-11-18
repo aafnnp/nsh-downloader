@@ -23,6 +23,7 @@ import {
   updateSettings,
 } from "./store";
 import { CATEGORY_ORDER, type Category } from "./model";
+import { checkUpdates, updaterSupported } from "./lib/update";
 
 function App() {
   const nav = signal<NavKey>("all");
@@ -43,6 +44,15 @@ function App() {
   });
 
   void bootstrap();
+
+  // A packaged app looks once after startup; a development run and the web skip it.
+  if (updaterSupported()) {
+    setTimeout(() => {
+      void checkUpdates().then((found) => {
+        if (found) notify(`发现新版本 ${found.version}，可在 设置 → 关于 中更新`);
+      });
+    }, 3000);
+  }
 
   const openAdd = () => adding.set(true);
   const openSettings = (section: SettingsSection = "general") => {
@@ -83,6 +93,13 @@ function App() {
       { type: "separator" },
       { label: "设置…", shortcut: "mod+,", onSelect: () => openSettings("general") },
       { label: "调度器…", onSelect: () => openSettings("scheduler") },
+      {
+        label: "检查更新…",
+        onSelect: () => {
+          openSettings("about");
+          void checkUpdates();
+        },
+      },
       { type: "separator" },
       { label: "退出", role: "quit" },
     ];

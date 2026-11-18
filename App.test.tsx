@@ -168,7 +168,9 @@ test("settings show the resolved download folder and engines", async () => {
   await app.press("id:settings-nav-about");
   await app.waitFor("id:about-aria2-license", { timeout: 5000 });
   await app.waitFor("id:about-openssl-license", { timeout: 5000 });
+  await app.waitFor("id:about-check-update", { timeout: 5000 });
   expect(app.texts()).toContain("随包组件");
+  expect(app.texts().some((text) => text.includes("开发运行不检查更新"))).toBe(true);
 });
 
 test("search narrows the list and clearing it brings the queue back", async () => {

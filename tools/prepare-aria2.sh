@@ -115,7 +115,7 @@ skip_dep() {
 check_arch() {
   local triple=$1 file=$2 expected arch found
   case "$triple" in
-    macos-arm64 | linux-arm64) expected="arm64 aarch64" ;;
+    macos-arm64 | linux-arm64 | linux-aarch64) expected="arm64 aarch64" ;;
     macos-x86_64 | linux-x86_64) expected="x86_64 x86-64" ;;
     *) return 0 ;;
   esac
@@ -366,7 +366,7 @@ for triple in sorted(os.listdir(root)):
     directory = f"{root}/{triple}"
     if not os.path.isdir(directory):
         continue
-    arch = "aarch64" if triple.endswith("arm64") else "x86_64"
+    arch = "aarch64" if triple.endswith(("arm64", "aarch64")) else "x86_64"
     for filename, name, archive in (
         ("aria2.tar.gz", "aria2c", True),
         ("aria2c.exe", "aria2c.exe", False),
