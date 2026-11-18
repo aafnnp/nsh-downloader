@@ -414,6 +414,8 @@ body = (
     f"export const bundledAria2License: string | null = {license_export};\n"
     f"export const bundledAria2SslLicense: string | null = {ssl_export};\n"
 )
-open("lib/aria2-asset.ts", "w").write(body)
-print("✓ wrote lib/aria2-asset.ts")
+# Windows decodes Python's stdout as cp1252, so keep this line ASCII.
+with open("lib/aria2-asset.ts", "w", encoding="utf-8") as out:
+    out.write(body)
+print("wrote lib/aria2-asset.ts")
 PY
