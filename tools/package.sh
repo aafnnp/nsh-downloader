@@ -40,8 +40,12 @@ prepare_sidecar() {
         triple=$(bash tools/prepare-aria2.sh --host-triple) || return 1
         ;;
       windows)
-        # The official Windows build is self-contained and can be fetched anywhere.
+        # The official build is self-contained and can be fetched anywhere;
+        # Windows on Arm runs it through x64 emulation.
         triple=windows-x86_64
+        case "$(uname -m)" in
+          arm64 | aarch64) triple=windows-arm64 ;;
+        esac
         ;;
     esac
   fi

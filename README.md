@@ -135,6 +135,7 @@ sudo apt install aria2    # Debian / Ubuntu
 tools/prepare-aria2.sh                  # 当前机器对应的平台
 tools/prepare-aria2.sh macos-arm64      # 也可以指定目标
 tools/prepare-aria2.sh windows-x86_64   # 官方自包含 aria2c.exe，可跨平台准备
+tools/prepare-aria2.sh windows-arm64    # 同一份 x86_64 exe，Windows on Arm 走 x64 模拟
 tools/prepare-aria2.sh linux-x86_64     # 需要 aria2 与 patchelf，建议在 Linux 上跑
 
 # 或者用包装脚本：先准备目标平台的 sidecar，再调用 nsh package
@@ -147,6 +148,7 @@ SKIP_ARIA2=1 tools/package.sh web --out dist
 - 产物在 `vendor/aria2/current/<triple>/`（已 gitignore），`lib/aria2-asset.ts` 由脚本生成；仓库里提交的是空列表 stub，所以 `nsh check`、`nsh test` 和普通 `nsh package` 都不需要二进制。`tools/package.sh` 跑完会把 stub 还原，避免提交指向构建产物的 import。
 - 运行时把 sidecar 解压或复制到应用数据目录的 `engines/<triple>/`，按来源大小判断是否复用；通过 `sh`（Windows 上是 `powershell.exe -EncodedCommand`）启动。`nsh` 的 `process.execute` 只匹配精确的可执行文件路径，shell 是指向随包位置的跨安装路径方案。Windows 不能用 `cmd.exe`：`nsh` 起进程时按 MSVC 规则转义参数里的引号（变成 `\"`），`cmd.exe` 不会把它读回引号，而且它还会展开 URL 里的 `%NAME%`；`-EncodedCommand` 把整条命令行以 base64 的 UTF-16LE 传过去，没有第二层解析。
 - 优先级：随包 `aria2c` → 系统 `aria2c` → `curl` → 内置 fetch。设置 → 网络与引擎 会显示“随应用打包”。
+- Windows arm64 包也带 aria2c：官方只有 x86_64 构建，Windows on Arm 通过系统内置的 x64 模拟运行。
 - macOS 约增加 4.5 MB，Windows 约增加 5.4 MB；Web 版不含二进制（浏览器不能起进程）。
 - macOS 版会把非系统 dylib 改到 `@executable_path/lib` 并重新 ad-hoc 签名；Linux 用 `$ORIGIN/lib` rpath，glibc 仍用系统自带的（打包 glibc 会和宿主的 `ld.so` 混用）；Windows 用官方 zip 里自包含的 `aria2c.exe`，下载时按脚本里固定的 SHA-256 校验。
 - 平台下限跟着准备 sidecar 的机器走：Homebrew 产物要求打包机的 macOS 版本（脚本会警告，app 本身只要求 macOS 11），Linux 产物要求打包机的 glibc。要在老系统上可用，就在更老的 runner 上构建，或用 `MACOSX_DEPLOYMENT_TARGET` 编译 aria2。
@@ -304,7 +306,7 @@ macOS 包是临时签名（ad hoc），首次打开需要右键 → 打开。
 - 直接 `nsh package` 不会自动准备 sidecar；没有 sidecar 的包会回退到系统 aria2c / curl。
 - 内置引擎单文件上限 8 MB，见上文；装 curl / aria2c 就没有这个限制。
 - 磁力与本地 `.torrent` 必须有 aria2c；没有时会直接说明要装什么，而不是排队后失败。
-- Windows arm64 包不带 aria2c（官方没有 arm64 构建），需要系统安装 aria2c 才有多线程与磁力。
+- Windows arm64 包里的 aria2c 是官方 x86_64 构建，依赖 Windows 11 on Arm 的 x64 模拟；更老的 ARM Windows 可能需要自行安装原生引擎。
 - Windows 安装包按架构区分：x64 用 `windows-x86_64`，Windows on Arm 用 `windows-arm64`；安装器会拒绝不匹配的机型。装错架构启动会报 `0xc000007b`。
 - Windows 包自带对应的 `vcruntime140.dll`（x64 另带 `vcruntime140_1.dll`），不要求系统预装 Visual C++ 运行库。
 - 应用内更新只认 GitHub Releases；macOS 自替换仍受 Gatekeeper 限制，第一次打开新版本可能需要右键 → 打开。

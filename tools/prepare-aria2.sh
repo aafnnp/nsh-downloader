@@ -291,10 +291,14 @@ prepare_linux() {
 
 prepare_windows() {
   local triple=$1
-  if [ "$triple" != "windows-x86_64" ]; then
-    echo "error: only windows-x86_64 has an official aria2c build (asked for $triple)" >&2
-    return 1
-  fi
+  case "$triple" in
+    windows-x86_64 | windows-arm64 | windows-aarch64) ;;
+    *)
+      echo "error: only Windows x86_64 and arm64 have a sidecar (asked for $triple)" >&2
+      return 1
+      ;;
+  esac
+  # The official build is x86_64; Windows on Arm runs it through x64 emulation.
   # The one sidecar fetched from the network: the release stays pinned, and so
   # does its SHA-256 (of aria2-1.37.0-win-64bit-build1.zip).
   local url=https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip

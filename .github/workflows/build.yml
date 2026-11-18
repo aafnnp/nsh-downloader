@@ -82,19 +82,19 @@ jobs:
             target: windows
             arch: x86_64
             nsh_arch: x86_64
+            aria2_triple: windows-x86_64
           - name: windows-aarch64
             os: windows-11-arm
             target: windows
             arch: aarch64
             nsh_arch: aarch64
-            # aria2 ships no official arm64 Windows build; this target uses the system engine.
-            skip_aria2: "1"
+            # The official file is x86_64; Windows on Arm runs it under x64 emulation.
+            aria2_triple: windows-arm64
           - name: web
             os: ubuntu-24.04
             target: web
             arch: ""
             nsh_arch: ""
-            skip_aria2: "1"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +142,7 @@ jobs:
       - name: Package
         shell: bash
         env:
-          SKIP_ARIA2: ${{ matrix.skip_aria2 }}
+          ARIA2_TRIPLE: ${{ matrix.aria2_triple }}
         run: |
           set -euo pipefail
           bash tools/package.sh "${{ matrix.target }}" \
@@ -154,14 +154,28 @@ jobs:
           ls -l dist
           du -sh dist/* 2>/dev/null || true
 
-      - name: Check the bundled aria2c (Windows x86_64)
-        if: matrix.target == 'windows' && matrix.skip_aria2 != '1'
+      - name: Check the bundled aria2c (Windows)
+        if: matrix.target == 'windows'
         shell: bash
         run: |
           set -euo pipefail
           exe=$(find dist -name 'aria2c.exe' -print -quit)
           test -n "$exe"
           "$exe" --version
+
+      # The sidecar's libraries are bundled with `$ORIGIN` rpaths, so running it
+      # here is the same check a user's first download makes.
+      - name: Check the bundled aria2c (Linux)
+        if: matrix.target == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(find dist -name 'aria2.tar.gz' -print -quit)
+          test -n "$archive"
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          tar -xzf "$archive" -C "$dir"
+          "$dir/aria2c" --version
 
       - name: Archive macOS app
         if: matrix.target == 'macos'
