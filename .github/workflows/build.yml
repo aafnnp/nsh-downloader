@@ -180,8 +180,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
           update="dist/Downloader-${{ steps.version.outputs.num_version }}-windows-${{ matrix.nsh_arch }}.zip"
           test -f "$update"
+          # Both architectures write these two names; a merged artifact download
+          # would keep only one, so name the installer for its architecture.
+          if [ -f "dist/Downloader-setup.exe" ]; then
+            mv "dist/Downloader-setup.exe" "dist/Downloader-$version-windows-${{ matrix.nsh_arch }}-setup.exe"
+          fi
+          rm -f "dist/Downloader.iss"
           rm -rf "dist/Downloader" "dist/Downloader.zip"
           test -f "$update"
 
