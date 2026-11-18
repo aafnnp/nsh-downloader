@@ -1,9 +1,58 @@
 {
   "name": "Downloader",
   "id": "dev.nsh.downloader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "build": 1,
   "icon": "icon.png",
   "appearance": "system",
-  "theme": "theme.json"
+  "theme": "theme.json",
+  "singleInstance": true,
+  "fileTypes": [
+    {
+      "name": "BitTorrent",
+      "extensions": [
+        "torrent"
+      ],
+      "mimeTypes": [
+        "application/x-bittorrent"
+      ],
+      "role": "viewer"
+    }
+  ],
+  "capabilities": {
+    "network": {
+      "hosts": [
+        "*"
+      ]
+    },
+    "clipboard": true,
+    "process": {
+      "execute": [
+        "curl",
+        "aria2c",
+        "sh",
+        "cmd",
+        "cmd.exe",
+        "powershell.exe",
+        "tar",
+        "chmod",
+        "open",
+        "explorer.exe",
+        "xdg-open"
+      ],
+      "exit": false
+    },
+    "fs": {
+      "read": [
+        "${pluginDir}",
+        "${dataDir}",
+        "${homeDir}"
+      ],
+      "write": [
+        "${dataDir}",
+        "${homeDir}"
+      ]
+    },
+    "statusBar": true
+  }
 }

@@ -15,8 +15,9 @@ permissions:
   contents: read
 
 env:
-  # Pinned: a package carries the runtime of the CLI that built it.
-  NSH_VERSION: v0.4.0
+  # Pinned: a package carries the runtime of the CLI that built it, so the
+  # installers are given the exact release the app is developed against.
+  NSH_VERSION: v0.5.1
 
 jobs:
   check:
@@ -73,12 +74,13 @@ jobs:
       - name: Install NSH (macOS, Linux)
         if: runner.os != 'Windows'
         run: |
-          curl -fsSL https://nsh.dev/install.sh | sh
+          curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install NSH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        # The workflow's NSH_VERSION env reaches the installer through $env.
         run: |
           irm https://nsh.dev/install.ps1 | iex
           "$env:LOCALAPPDATA\nsh\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -99,18 +101,36 @@ jobs:
           echo "num_version=$num_version" >> "$GITHUB_OUTPUT"
           echo "Building $version (version field $num_version)"
 
+      - name: Install the aria2 tooling (Linux)
+        if: matrix.target == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 patchelf file
+
+      # One entry point: it prepares the target's sidecar, keeps other targets'
+      # out of the asset list, packages, and restores the committed stub.
       - name: Package
         shell: bash
         run: |
           set -euo pipefail
-          nsh package App.tsx \
-            --target "${{ matrix.target }}" \
+          bash tools/package.sh "${{ matrix.target }}" \
             --out dist \
             --app-version "${{ steps.version.outputs.num_version }}" \
             --build "${GITHUB_RUN_NUMBER}"
           # No pipes into head here: with `pipefail`, a closed pipe would fail the step.
           ls -l dist
           du -sh dist/* 2>/dev/null || true
+
+      - name: Check the bundled aria2c (Windows)
+        if: matrix.target == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=$(find dist -name 'aria2c.exe' -print -quit)
+          test -n "$exe"
+          "$exe" --version
 
       - name: Archive macOS app
         if: runner.os == 'macOS'

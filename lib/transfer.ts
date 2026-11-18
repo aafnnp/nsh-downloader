@@ -1,7 +1,8 @@
 import { writeFile } from "fs/promises";
-import { spawn, type ChildProcess } from "process";
+import processModule, { spawn, type ChildProcess } from "process";
 import type { EngineId } from "../model";
 import { engineAvailable } from "./engines";
+import { shellCommand } from "./aria2";
 import { fileSize, pathSize, removeIfPresent } from "./paths";
 import { messageOf } from "./probe";
 
@@ -18,8 +19,12 @@ export interface TransferSpec {
   proxy: string;
   referer: string | null;
   headers: string[];
-  /** A magnet link: aria2c takes it, and progress comes from its own summary lines. */
+  /** A magnet link or a `.torrent` URL: aria2c takes it, and progress comes from its own summary lines. */
   torrent: boolean;
+  /** A local `.torrent` file aria2c reads instead of `url`. */
+  torrentFile?: string | null;
+  /** The bundled aria2c to start; `null` starts the system `aria2c`. */
+  aria2Path?: string | null;
 }
 
 export interface TransferHooks {
@@ -81,7 +86,7 @@ function aria2Args(spec: TransferSpec): string[] {
   if (spec.limitKb > 0) args.push(`--max-download-limit=${spec.limitKb}K`);
   if (spec.referer) args.push(`--referer=${spec.referer}`);
   for (const header of spec.headers) args.push(`--header=${header}`);
-  args.push(spec.url);
+  args.push(spec.torrentFile || spec.url);
   return args;
 }
 
@@ -108,6 +113,16 @@ function curlArgs(spec: TransferSpec): string[] {
   for (const header of spec.headers) args.push("--header", header);
   args.push("--", spec.url);
   return args;
+}
+
+/** `ChildProcess.kill` ends the whole tree (a process group, or the job on Windows). */
+function killChild(child: ChildProcess | null): void {
+  if (!child) return;
+  try {
+    child.kill();
+  } catch {
+    // Already gone.
+  }
 }
 
 /** aria2c and curl write the file themselves: no JS-side size limit, resume, and parallel connections. */
@@ -141,8 +156,15 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
 
   const launch = (attempt: number) => {
     try {
-      child = spawn(engine === "aria2" ? "aria2c" : "curl", engine === "aria2" ? aria2Args(spec) : curlArgs(spec), {
-        cwd: spec.dir,
+      const raw = engine === "aria2" ? aria2Args(spec) : curlArgs(spec);
+      const launch = engine === "aria2" && spec.aria2Path
+        ? shellCommand(spec.aria2Path, raw)
+        : { command: engine === "aria2" ? "aria2c" : "curl", args: raw };
+      child = spawn(launch.command, launch.args, {
+        // nsh starts a child in a directory it may write to, and the download
+        // folder can sit outside those roots (a mounted volume). Both engines
+        // get absolute paths, so the working directory does not pick the file.
+        cwd: processModule.dataDir ?? spec.dir,
       });
     } catch (error) {
       finish({ ok: false, error: messageOf(error), canceled: false });
@@ -192,11 +214,7 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
   return {
     cancel() {
       canceled = true;
-      try {
-        child?.kill();
-      } catch {
-        // Already gone.
-      }
+      killChild(child);
       finish({ ok: false, error: "已暂停", canceled: true });
     },
     done,

@@ -1,11 +1,16 @@
 import { run } from "process";
 import type { EngineId } from "../model";
+import { prepareBundledAria2, runBundled } from "./aria2";
 
 export interface EngineInfo {
   aria2: boolean;
   curl: boolean;
   aria2Version: string;
   curlVersion: string;
+  /** Where aria2c comes from: the app's sidecar, the system, or nowhere. */
+  aria2Source: "bundled" | "system" | "";
+  /** The bundled executable path, or `aria2c` for the system engine. */
+  aria2Path: string;
   /** Where the process-based engines are available at all (the desktops). */
   processes: boolean;
   checked: boolean;
@@ -16,6 +21,8 @@ export const engines: EngineInfo = {
   curl: false,
   aria2Version: "",
   curlVersion: "",
+  aria2Source: "",
+  aria2Path: "",
   processes: false,
   checked: false,
 };
@@ -33,15 +40,35 @@ function firstLine(text: string): string {
   return line.slice(0, 120);
 }
 
-/** Looks for aria2c and curl once; both are optional, the fetch engine always works for small files. */
+/** Looks for the bundled aria2c, then curl and system aria2c. */
 export async function detectEngines(): Promise<EngineInfo> {
+  engines.aria2 = false;
+  engines.aria2Version = "";
+  engines.aria2Source = "";
+  engines.aria2Path = "";
+
+  const bundled = await prepareBundledAria2();
+  if (bundled) {
+    const found = await withDeadline(runBundled(bundled, ["--version"]), 5000);
+    if (found && found.code === 0) {
+      engines.aria2 = true;
+      engines.aria2Version = firstLine(found.stdout);
+      engines.aria2Source = "bundled";
+      engines.aria2Path = bundled.path;
+    }
+  }
+
   const curl = await withDeadline(run("curl", ["--version"], { timeoutMs: 3000 }), 3500);
   engines.curl = !!curl && curl.code === 0;
   engines.curlVersion = curl && curl.code === 0 ? firstLine(curl.stdout) : "";
 
-  const aria2 = await withDeadline(run("aria2c", ["--version"], { timeoutMs: 3000 }), 3500);
-  engines.aria2 = !!aria2 && aria2.code === 0;
-  engines.aria2Version = aria2 && aria2.code === 0 ? firstLine(aria2.stdout) : "";
+  if (!engines.aria2) {
+    const aria2 = await withDeadline(run("aria2c", ["--version"], { timeoutMs: 3000 }), 3500);
+    engines.aria2 = !!aria2 && aria2.code === 0;
+    engines.aria2Version = aria2 && aria2.code === 0 ? firstLine(aria2.stdout) : "";
+    engines.aria2Source = engines.aria2 ? "system" : "";
+    engines.aria2Path = engines.aria2 ? "aria2c" : "";
+  }
   engines.processes = engines.curl || engines.aria2;
 
   engines.checked = true;
@@ -63,7 +90,7 @@ export function engineAvailable(id: EngineId): boolean {
 export function engineLabel(id: EngineId): string {
   switch (id) {
     case "aria2":
-      return "aria2c · 多线程";
+      return engines.aria2Source === "bundled" ? "aria2c · 内置" : "aria2c · 多线程";
     case "curl":
       return "curl · 断点续传";
     case "segments":
