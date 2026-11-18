@@ -175,18 +175,59 @@ jobs:
 
       # `nsh package` writes the updater archive next to the portable app; it is
       # the file `nsh update-manifest` reads, so keep it and drop the duplicate.
+      # nsh writes `x64compatible` for both builds, which lets an Arm64 installer
+      # run on an x64 machine and install an executable that cannot start there
+      # (0xc000007b). Make each installer match the runner it packages.
+      - name: Match the installer to its architecture (Windows)
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $nshArch = '${{ matrix.nsh_arch }}'
+          $iss = Join-Path (Resolve-Path 'dist').Path 'Downloader.iss'
+          if (-not (Test-Path $iss)) { throw "missing $iss" }
+          if ($nshArch -eq 'aarch64') {
+            $allowed = 'arm64'
+            $installMode = 'arm64'
+          } else {
+            $allowed = 'x64compatible and not arm64'
+            $installMode = 'x64compatible'
+          }
+          $lines = Get-Content $iss | ForEach-Object {
+            if ($_ -match '^ArchitecturesAllowed=') { "ArchitecturesAllowed=$allowed" }
+            elseif ($_ -match '^ArchitecturesInstallIn64BitMode=') { "ArchitecturesInstallIn64BitMode=$installMode" }
+            else { $_ }
+          }
+          Set-Content -Path $iss -Value $lines -Encoding utf8
+          Get-Content $iss | Select-String '^Architectures'
+
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe", "${env:ProgramFiles}\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { throw 'ISCC.exe not found, though nsh package compiled the installer' }
+          Push-Location dist
+          try {
+            & $iscc 'Downloader.iss'
+            if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
       - name: Keep the Windows update archive
         if: matrix.target == 'windows'
         shell: bash
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
+          arch_label="${{ matrix.nsh_arch }}"
+          if [ "$arch_label" = "aarch64" ]; then arch_label="arm64"; fi
           update="dist/Downloader-${{ steps.version.outputs.num_version }}-windows-${{ matrix.nsh_arch }}.zip"
           test -f "$update"
           # Both architectures write these two names; a merged artifact download
           # would keep only one, so name the installer for its architecture.
           if [ -f "dist/Downloader-setup.exe" ]; then
-            mv "dist/Downloader-setup.exe" "dist/Downloader-$version-windows-${{ matrix.nsh_arch }}-setup.exe"
+            mv "dist/Downloader-setup.exe" "dist/Downloader-$version-windows-$arch_label-setup.exe"
           fi
           rm -f "dist/Downloader.iss"
           rm -rf "dist/Downloader" "dist/Downloader.zip"
@@ -299,6 +340,8 @@ jobs:
             echo
             echo "- 浏览器扩展：仓库的 \`extension/\` 目录，按 README 载入即可。"
             echo "- macOS 包为临时签名，首次打开请右键 → 打开。"
+            echo "- Windows x64 下载 \`windows-x86_64\`，Windows on Arm 下载 \`windows-arm64\`；自动更新包里的 Arm64 名为 \`windows-aarch64\`。"
+            echo "- 启动提示 0xc000007b 通常是装错了架构；架构正确仍失败时，安装 Microsoft Visual C++ 2015–2022 运行库。"
             echo "- 应用内更新读取这个 Release 的 \`latest.json\`。"
             echo
             cat "$changes"
