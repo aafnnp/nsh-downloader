@@ -40,14 +40,26 @@ function firstLine(text: string): string {
   return line.slice(0, 120);
 }
 
-/** Looks for the bundled aria2c, then curl and system aria2c. */
-export async function detectEngines(): Promise<EngineInfo> {
+let scanning: Promise<EngineInfo> | null = null;
+
+/** Looks for the bundled aria2c, then curl and system aria2c; a scan in progress is shared. */
+export function detectEngines(): Promise<EngineInfo> {
+  if (!scanning) {
+    scanning = scanEngines().finally(() => {
+      scanning = null;
+    });
+  }
+  return scanning;
+}
+
+async function scanEngines(): Promise<EngineInfo> {
   engines.aria2 = false;
   engines.aria2Version = "";
   engines.aria2Source = "";
   engines.aria2Path = "";
 
-  const bundled = await prepareBundledAria2();
+  // A sidecar the app cannot unpack still leaves curl and the system's aria2c to try.
+  const bundled = await withDeadline(prepareBundledAria2(), 25000);
   if (bundled) {
     const found = await withDeadline(runBundled(bundled, ["--version"]), 5000);
     if (found && found.code === 0) {

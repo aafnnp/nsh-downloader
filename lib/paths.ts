@@ -3,6 +3,17 @@ import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import processModule, { run } from "process";
 import { platform } from "os";
+import { fileURLToPath } from "url";
+
+/**
+ * `fileURLToPath` keeps the URL's leading slash before a Windows drive
+ * (`/C:/…`), and no `capabilities.fs` root matches that form.
+ */
+export function filePathFromUrl(url: string | URL): string {
+  const path = fileURLToPath(url);
+  if (platform() !== "windows") return path;
+  return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
+}
 
 /** `~/Downloads`, the desktop convention for a download manager. */
 export function defaultDownloadDir(): string {

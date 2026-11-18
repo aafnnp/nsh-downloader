@@ -2,7 +2,7 @@ import { Scroll, signal, Text, View, windowSize } from "nsh";
 import { Button, Dialog, Input } from "nsh/base";
 import { prettyPath } from "../lib/paths";
 import { extractUrls, normalizeUrl } from "../lib/urls";
-import { addMany, notify, settings } from "../store";
+import { addMany, notify, settings, type AddResult } from "../store";
 import {
   CATEGORY_META,
   CATEGORY_ORDER,
@@ -46,16 +46,22 @@ export function AddDialog(props: AddDialogProps) {
     }
     busy.set(true);
     failure.set("");
-    const result = await addMany(found, {
-      dir: dir().trim() || undefined,
-      category: category(),
-      priority: priority(),
-      limitKb: limit().trim() === "" ? null : Number(limit().replace(/[^0-9]/g, "") || 0),
-      description: description(),
-      referer: normalizeReferer(referer()),
-      headers: headerLines(headers()),
-    });
-    busy.set(false);
+    let result: AddResult;
+    try {
+      result = await addMany(found, {
+        dir: dir().trim() || undefined,
+        category: category(),
+        priority: priority(),
+        limitKb: limit().trim() === "" ? null : Number(limit().replace(/[^0-9]/g, "") || 0),
+        description: description(),
+        referer: normalizeReferer(referer()),
+        headers: headerLines(headers()),
+      });
+    } catch (error) {
+      result = { ok: false, message: error instanceof Error ? error.message : String(error) };
+    } finally {
+      busy.set(false);
+    }
     if (result.ok) {
       links.set("");
       referer.set("");

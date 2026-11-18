@@ -2,7 +2,7 @@ import { platform } from "nsh";
 import processModule, { run } from "process";
 import { exists, mkdir, readFile, stat, writeFile } from "fs/promises";
 import { join } from "path";
-import { fileURLToPath } from "url";
+import { filePathFromUrl } from "./paths";
 import {
   bundledAria2Assets,
   bundledAria2License,
@@ -36,17 +36,22 @@ function assetPaths(asset: BundledAria2Asset): { packaged: string; dev: string }
   const relative = asset.url.slice("asset:/".length);
   try {
     return {
-      packaged: fileURLToPath(new URL(`../assets/${relative}`, import.meta.url)),
-      dev: fileURLToPath(new URL(`../${relative}`, import.meta.url)),
+      packaged: filePathFromUrl(new URL(`../assets/${relative}`, import.meta.url)),
+      dev: filePathFromUrl(new URL(`../${relative}`, import.meta.url)),
     };
   } catch {
     return null;
   }
 }
 
+/** `exists` rejects for a path outside the granted roots; that path holds no asset. */
 async function firstExisting(paths: string[]): Promise<string | null> {
   for (const path of paths) {
-    if (await exists(path)) return path;
+    try {
+      if (await exists(path)) return path;
+    } catch {
+      // Keep looking: `read` grants only the app's own folders.
+    }
   }
   return null;
 }
@@ -56,8 +61,8 @@ async function shippedAssetPath(url: string | null): Promise<string | null> {
   const relative = url.slice("asset:/".length);
   try {
     return await firstExisting([
-      fileURLToPath(new URL(`../assets/${relative}`, import.meta.url)),
-      fileURLToPath(new URL(`../${relative}`, import.meta.url)),
+      filePathFromUrl(new URL(`../assets/${relative}`, import.meta.url)),
+      filePathFromUrl(new URL(`../${relative}`, import.meta.url)),
     ]);
   } catch {
     return null;
@@ -103,6 +108,10 @@ export function windowsShellCommand(path: string, args: string[]): { command: st
 export function powerShellScript(path: string, args: string[]): string {
   const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
   return [
+    // nsh gives a child only PATH, HOME, SystemRoot and a few more, so
+    // PowerShell has no PATHEXT and calls an .exe a document instead of
+    // running it ("Cannot run this document in a pipeline").
+    "$env:PATHEXT = '.COM;.EXE;.BAT;.CMD'",
     `& ${[path, ...args].map(quote).join(" ")}`,
     // A launch failure leaves $LASTEXITCODE unset; report it as one.
     "$code = $LASTEXITCODE",

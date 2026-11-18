@@ -2,7 +2,7 @@ import { Clipboard, computed, platform, setColorScheme, signal, Storage } from "
 import { Application, isAvailable as desktopWindow } from "nsh/desktop";
 import { readFile, stat } from "fs/promises";
 import { join } from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { pathToFileURL } from "url";
 import {
   CATEGORY_META,
   categoryOfKind,
@@ -27,6 +27,7 @@ import {
   defaultDownloadDir,
   dirOf,
   ensureDir,
+  filePathFromUrl,
   fileSize,
   filenameOf,
   pathSize,
@@ -792,7 +793,7 @@ export async function importFiles(uris: string[]): Promise<AddResult> {
     let path = uri;
     if (uri.startsWith("file:")) {
       try {
-        path = fileURLToPath(uri);
+        path = filePathFromUrl(uri);
       } catch {
         continue;
       }

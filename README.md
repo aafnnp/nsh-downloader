@@ -146,7 +146,7 @@ SKIP_ARIA2=1 tools/package.sh web --out dist
 ```
 
 - 产物在 `vendor/aria2/current/<triple>/`（已 gitignore），`lib/aria2-asset.ts` 由脚本生成；仓库里提交的是空列表 stub，所以 `nsh check`、`nsh test` 和普通 `nsh package` 都不需要二进制。`tools/package.sh` 跑完会把 stub 还原，避免提交指向构建产物的 import。
-- 运行时把 sidecar 解压或复制到应用数据目录的 `engines/<triple>/`，按来源大小判断是否复用；通过 `sh`（Windows 上是 `powershell.exe -EncodedCommand`）启动。`nsh` 的 `process.execute` 只匹配精确的可执行文件路径，shell 是指向随包位置的跨安装路径方案。Windows 不能用 `cmd.exe`：`nsh` 起进程时按 MSVC 规则转义参数里的引号（变成 `\"`），`cmd.exe` 不会把它读回引号，而且它还会展开 URL 里的 `%NAME%`；`-EncodedCommand` 把整条命令行以 base64 的 UTF-16LE 传过去，没有第二层解析。
+- 运行时把 sidecar 解压或复制到应用数据目录的 `engines/<triple>/`，按来源大小判断是否复用；通过 `sh`（Windows 上是 `powershell.exe -EncodedCommand`）启动。`nsh` 的 `process.execute` 只匹配精确的可执行文件路径，shell 是指向随包位置的跨安装路径方案。Windows 不能用 `cmd.exe`：`nsh` 起进程时按 MSVC 规则转义参数里的引号（变成 `\"`），`cmd.exe` 不会把它读回引号，而且它还会展开 URL 里的 `%NAME%`；`-EncodedCommand` 把整条命令行以 base64 的 UTF-16LE 传过去，没有第二层解析。`nsh` 只给子进程 `PATH`、`HOME`、`SystemRoot` 等少数环境变量，不传 `PATHEXT`，PowerShell 因此会把 `.exe` 当成“文档”而拒绝执行，所以脚本先设 `$env:PATHEXT` 再调用。资源导入的 `asset:/` URL 换成本地路径时也要留意：`fileURLToPath` 在 Windows 上会留下前导斜杠（`/C:/…`），这种形式不在任何 `fs` 授权根下，`lib/paths.ts` 的 `filePathFromUrl` 负责去掉它。
 - 优先级：随包 `aria2c` → 系统 `aria2c` → `curl` → 内置 fetch。设置 → 网络与引擎 会显示“随应用打包”。
 - Windows arm64 包也带 aria2c：官方只有 x86_64 构建，Windows on Arm 通过系统内置的 x64 模拟运行。
 - macOS 约增加 4.5 MB，Windows 约增加 5.4 MB；Web 版不含二进制（浏览器不能起进程）。
@@ -269,7 +269,7 @@ tools/              图标生成、aria2 sidecar 准备与打包脚本、e2e 的
 ## 测试
 
 ```sh
-nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 打包（29 个用例）
+nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 打包（30 个用例）
 tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代理、磁力（需本机 curl，磁力需 aria2c）
 ```
 
@@ -282,7 +282,7 @@ tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代�
 打一个 tag 就会出七个产物（macOS / Linux / Windows 各两种架构，加网页预览版）并生成 Release：
 
 ```sh
-git tag v1.1.1 && git push origin v1.1.1
+git tag v1.1.2 && git push origin v1.1.2
 ```
 
 最新一次：<https://github.com/aafnnp/nsh-downloader/releases>
@@ -294,7 +294,7 @@ git tag v1.1.1 && git push origin v1.1.1
 [.github/workflows/build.yml](./.github/workflows/build.yml)：
 
 - `check`：`nsh check` → `nsh build`（警告即问题）→ `nsh test`，输出 JUnit。
-- `package`：macOS（arm64 / x86_64）、Linux（x86_64 / aarch64）、Windows（x86_64 / arm64）、Web 共七个产物；桌面目标都走 `tools/package.sh`（先准备该目标的 sidecar，再 `nsh package` 打进 `.app` / `.zip` / `.tar.gz`，最后还原 stub），CI 与本地是同一条命令。Windows arm64 没有官方 aria2c 构建，因此不带 sidecar，回退到系统引擎。
+- `package`：macOS（arm64 / x86_64）、Linux（x86_64 / aarch64）、Windows（x86_64 / arm64）、Web 共七个产物；桌面目标都走 `tools/package.sh`（先准备该目标的 sidecar，再 `nsh package` 打进 `.app` / `.zip` / `.tar.gz`，最后还原 stub），CI 与本地是同一条命令。Windows arm64 装的是官方 x86_64 的 aria2c，由 Windows 11 on Arm 的 x64 模拟运行。
 - `release`：打 `v*` tag 时汇总产物、用 `nsh update-manifest` 生成 `latest.json`、生成 `SHA256SUMS.txt` 与变更说明，用 `gh release` 发布。
 - `e2e`：手动触发的 macOS 真机引擎测试。
 

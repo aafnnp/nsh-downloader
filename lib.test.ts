@@ -1,6 +1,7 @@
 import { platform } from "nsh";
 import { expect, test } from "nsh/test";
 import { aria2Triple, powerShellScript, shellCommand, windowsShellCommand } from "./lib/aria2";
+import { filePathFromUrl } from "./lib/paths";
 import {
   extractUrls,
   magnetInfo,
@@ -158,6 +159,8 @@ test("Windows gets the whole command line as one encoded argument, so no shell p
   expect(script.includes(`'${args[0]}'`)).toBe(true);
   expect(script.includes(`'${args[2]}'`)).toBe(true);
   expect(script.includes("exit $code")).toBe(true);
+  // nsh gives the child no PATHEXT, and PowerShell then calls the .exe a document.
+  expect(script.includes("$env:PATHEXT = ")).toBe(true);
   // `%` and `&` reach aria2c as typed instead of being expanded (cmd) or split (a shell).
   const decoded = atob(encoded);
   let utf16 = "";
@@ -169,6 +172,13 @@ test("Windows gets the whole command line as one encoded argument, so no shell p
 
 test("a PowerShell argument keeps its text when it contains a quote", () => {
   expect(powerShellScript("C:\\it's\\aria2c.exe", [])).toBe(
-    "& 'C:\\it''s\\aria2c.exe'\n$code = $LASTEXITCODE\nif ($null -eq $code) { exit 1 } else { exit $code }",
+    "$env:PATHEXT = '.COM;.EXE;.BAT;.CMD'\n& 'C:\\it''s\\aria2c.exe'\n$code = $LASTEXITCODE\nif ($null -eq $code) { exit 1 } else { exit $code }",
   );
+});
+
+test("an asset URL becomes a path a Windows fs grant matches", () => {
+  if (platform.os !== "windows") return;
+  const path = filePathFromUrl("file:///C:/Users/Ann%20Lee/aria2c.exe");
+  expect(path.startsWith("C:/") || path.startsWith("C:\\")).toBe(true);
+  expect(path.endsWith("aria2c.exe")).toBe(true);
 });
