@@ -192,24 +192,45 @@ jobs:
           if (-not (Test-Path $iss)) { throw "missing $iss" }
 
           $vsArch = if ($nshArch -eq 'aarch64') { 'arm64' } else { 'x64' }
-          $redistRoots = @(
-            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC",
-            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VC\Redist\MSVC",
-            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC",
-            "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC"
-          )
-          $redistRoot = $redistRoots | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $redistRoot) { throw "Visual Studio's VC redist directory not found" }
-          $crtDir = Get-ChildItem -Path $redistRoot -Recurse -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue |
-            Where-Object { $_.Parent.Name -eq $vsArch } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $crtDir) { throw "no Microsoft VC CRT for $vsArch under $redistRoot" }
-          Write-Host "using CRT $($crtDir.FullName)"
           $runtimeDlls = if ($vsArch -eq 'arm64') { @('vcruntime140.dll') } else { @('vcruntime140.dll', 'vcruntime140_1.dll') }
+          $expectedMachine = if ($vsArch -eq 'arm64') { 0xAA64 } else { 0x8664 }
+
+          function Get-PeMachine([string]$path) {
+            $stream = [IO.File]::OpenRead($path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3C
+              $pe = $reader.ReadInt32()
+              $stream.Position = $pe + 4
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+
+          # Windows does not ship vcruntime140, and on Arm64 the x64 redist's copy
+          # can sit in the search path. Take the native runtime from System32,
+          # installing the official redist first when it is absent.
+          $system32 = Join-Path $env:SystemRoot 'System32'
+          $needInstall = $false
           foreach ($dll in $runtimeDlls) {
-            $source = Join-Path $crtDir.FullName $dll
+            $path = Join-Path $system32 $dll
+            if (-not (Test-Path $path) -or (Get-PeMachine $path) -ne $expectedMachine) {
+              $needInstall = $true
+            }
+          }
+          if ($needInstall) {
+            Write-Host "installing the $vsArch Visual C++ runtime"
+            $url = if ($vsArch -eq 'arm64') { 'https://aka.ms/vs/17/release/vc_redist.arm64.exe' } else { 'https://aka.ms/vs/17/release/vc_redist.x64.exe' }
+            $installer = Join-Path $env:TEMP 'vc_redist.exe'
+            Invoke-WebRequest -Uri $url -OutFile $installer
+            $process = Start-Process -FilePath $installer -ArgumentList '/install','/quiet','/norestart' -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 1638, 3010)) { throw "vc_redist failed with $($process.ExitCode)" }
+          }
+          foreach ($dll in $runtimeDlls) {
+            $source = Join-Path $system32 $dll
             if (-not (Test-Path $source)) { throw "missing $source" }
+            if ((Get-PeMachine $source) -ne $expectedMachine) { throw "$source is not a $vsArch binary" }
             Copy-Item -Path $source -Destination $app -Force
             Write-Host "bundled $dll from $source"
           }
