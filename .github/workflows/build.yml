@@ -287,11 +287,15 @@ jobs:
           if (-not $iscc) { throw 'ISCC.exe not found, though nsh package compiled the installer' }
           Push-Location dist
           try {
-            & $iscc 'Downloader.iss'
+            # Inno's default output is .\Output; write beside the portable app
+            # instead, so the release uploads and renames the recompiled one.
+            & $iscc "/O$dist" 'Downloader.iss'
             if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
           } finally {
             Pop-Location
           }
+          Remove-Item -Recurse -Force (Join-Path $dist 'Output') -ErrorAction SilentlyContinue
+          if (-not (Test-Path (Join-Path $dist 'Downloader-setup.exe'))) { throw 'ISCC wrote no installer' }
 
       - name: Keep the Windows update archive
         if: matrix.target == 'windows'
