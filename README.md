@@ -282,7 +282,7 @@ tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代�
 打一个 tag 就会出七个产物（macOS / Linux / Windows 各两种架构，加网页预览版）并生成 Release：
 
 ```sh
-git tag v1.1.2 && git push origin v1.1.2
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
 最新一次：<https://github.com/aafnnp/nsh-downloader/releases>
