@@ -280,7 +280,7 @@ tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代�
 打一个 tag 就会出七个产物（macOS / Linux / Windows 各两种架构，加网页预览版）并生成 Release：
 
 ```sh
-git tag v1.1.0 && git push origin v1.1.0
+git tag v1.1.1 && git push origin v1.1.1
 ```
 
 最新一次：<https://github.com/aafnnp/nsh-downloader/releases>
@@ -306,7 +306,7 @@ macOS 包是临时签名（ad hoc），首次打开需要右键 → 打开。
 - 磁力与本地 `.torrent` 必须有 aria2c；没有时会直接说明要装什么，而不是排队后失败。
 - Windows arm64 包不带 aria2c（官方没有 arm64 构建），需要系统安装 aria2c 才有多线程与磁力。
 - Windows 安装包按架构区分：x64 用 `windows-x86_64`，Windows on Arm 用 `windows-arm64`；安装器会拒绝不匹配的机型。装错架构启动会报 `0xc000007b`。
-- Windows 打包版还依赖 Microsoft Visual C++ 2015–2022 运行库（[x64](https://aka.ms/vs/17/release/vc_redist.x64.exe) / [arm64](https://aka.ms/vs/17/release/vc_redist.arm64.exe)）；架构正确仍启动失败时先安装它。
+- Windows 包自带对应的 `vcruntime140.dll`（x64 另带 `vcruntime140_1.dll`），不要求系统预装 Visual C++ 运行库。
 - 应用内更新只认 GitHub Releases；macOS 自替换仍受 Gatekeeper 限制，第一次打开新版本可能需要右键 → 打开。
 - 内置 fetch 引擎与 HLS/DASH 分片不支持应用内代理，只跟随系统代理。
 - 需要登录态的网盘必须自己提供直链和 Cookie，本应用不替你做鉴权或绕过分享限制。

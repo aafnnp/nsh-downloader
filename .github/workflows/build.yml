@@ -175,16 +175,58 @@ jobs:
 
       # `nsh package` writes the updater archive next to the portable app; it is
       # the file `nsh update-manifest` reads, so keep it and drop the duplicate.
-      # nsh writes `x64compatible` for both builds, which lets an Arm64 installer
-      # run on an x64 machine and install an executable that cannot start there
-      # (0xc000007b). Make each installer match the runner it packages.
-      - name: Match the installer to its architecture (Windows)
+      # nsh writes `x64compatible` for both builds, so each installer could be
+      # installed on the other architecture and leave an executable Windows
+      # cannot start (0xc000007b). Match the installer to its runner, and ship
+      # the MSVC runtime the prebuilt runner imports (vcruntime140[_1].dll):
+      # Windows does not include it, and a wrong-architecture copy in PATH is
+      # another 0xc000007b.
+      - name: Bundle the C++ runtime and match the installer to its architecture (Windows)
         if: matrix.target == 'windows'
         shell: pwsh
         run: |
           $nshArch = '${{ matrix.nsh_arch }}'
-          $iss = Join-Path (Resolve-Path 'dist').Path 'Downloader.iss'
+          $dist = (Resolve-Path 'dist').Path
+          $app = Join-Path $dist 'Downloader'
+          $iss = Join-Path $dist 'Downloader.iss'
           if (-not (Test-Path $iss)) { throw "missing $iss" }
+
+          $vsArch = if ($nshArch -eq 'aarch64') { 'arm64' } else { 'x64' }
+          $redistRoots = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VC\Redist\MSVC",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC"
+          )
+          $redistRoot = $redistRoots | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $redistRoot) { throw "Visual Studio's VC redist directory not found" }
+          $versionDir = Get-ChildItem -Path $redistRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $versionDir) { throw "no VC redist versions under $redistRoot" }
+          $crtDir = Get-ChildItem -Path (Join-Path $versionDir.FullName $vsArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $crtDir) { throw "no Microsoft VC CRT for $vsArch under $($versionDir.FullName)" }
+          $runtimeDlls = if ($vsArch -eq 'arm64') { @('vcruntime140.dll') } else { @('vcruntime140.dll', 'vcruntime140_1.dll') }
+          foreach ($dll in $runtimeDlls) {
+            $source = Join-Path $crtDir.FullName $dll
+            if (-not (Test-Path $source)) { throw "missing $source" }
+            Copy-Item -Path $source -Destination $app -Force
+            Write-Host "bundled $dll from $source"
+          }
+
+          $update = Join-Path $dist "Downloader-${{ steps.version.outputs.num_version }}-windows-$nshArch.zip"
+          if (-not (Test-Path $update)) { throw "missing $update" }
+          Compress-Archive -Path $app -DestinationPath $update -Force
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($update)
+          try {
+            $names = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
+            foreach ($dll in $runtimeDlls) {
+              if ($names -notcontains "Downloader/$dll") { throw "$update lacks Downloader/$dll" }
+            }
+          } finally {
+            $archive.Dispose()
+          }
+          Write-Host "rebuilt $update with the C++ runtime"
+
           if ($nshArch -eq 'aarch64') {
             $allowed = 'arm64'
             $installMode = 'arm64'
@@ -341,7 +383,7 @@ jobs:
             echo "- 浏览器扩展：仓库的 \`extension/\` 目录，按 README 载入即可。"
             echo "- macOS 包为临时签名，首次打开请右键 → 打开。"
             echo "- Windows x64 下载 \`windows-x86_64\`，Windows on Arm 下载 \`windows-arm64\`；自动更新包里的 Arm64 名为 \`windows-aarch64\`。"
-            echo "- 启动提示 0xc000007b 通常是装错了架构；架构正确仍失败时，安装 Microsoft Visual C++ 2015–2022 运行库。"
+            echo "- Windows 包已附带对应的 Microsoft Visual C++ 运行库；启动提示 0xc000007b 通常是装错了架构。"
             echo "- 应用内更新读取这个 Release 的 \`latest.json\`。"
             echo
             cat "$changes"
