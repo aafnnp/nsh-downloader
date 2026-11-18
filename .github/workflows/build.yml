@@ -200,10 +200,12 @@ jobs:
           )
           $redistRoot = $redistRoots | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $redistRoot) { throw "Visual Studio's VC redist directory not found" }
-          $versionDir = Get-ChildItem -Path $redistRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $versionDir) { throw "no VC redist versions under $redistRoot" }
-          $crtDir = Get-ChildItem -Path (Join-Path $versionDir.FullName $vsArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $crtDir) { throw "no Microsoft VC CRT for $vsArch under $($versionDir.FullName)" }
+          $crtDir = Get-ChildItem -Path $redistRoot -Recurse -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Parent.Name -eq $vsArch } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $crtDir) { throw "no Microsoft VC CRT for $vsArch under $redistRoot" }
+          Write-Host "using CRT $($crtDir.FullName)"
           $runtimeDlls = if ($vsArch -eq 'arm64') { @('vcruntime140.dll') } else { @('vcruntime140.dll', 'vcruntime140_1.dll') }
           foreach ($dll in $runtimeDlls) {
             $source = Join-Path $crtDir.FullName $dll
