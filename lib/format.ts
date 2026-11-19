@@ -12,8 +12,9 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
+/** A running transfer reads `0 B/s` while stalled; `—` is for one that is not running. */
 export function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond < 1) return "—";
+  if (!isFinite(bytesPerSecond) || bytesPerSecond < 1) return "0 B/s";
   return `${formatBytes(bytesPerSecond)}/s`;
 }
 

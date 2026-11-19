@@ -12,6 +12,7 @@ import {
 } from "./lib/urls";
 import { parseAria2Summary, TorrentProgress } from "./lib/transfer";
 import { SpeedMeter } from "./lib/speed";
+import { formatSpeed } from "./lib/format";
 import {
   categoryOfKind,
   inScheduleWindow,
@@ -214,4 +215,11 @@ test("speed comes from ticks closer together than the smoothing gap", () => {
 
   // No new bytes: the reading decays instead of holding the old rate.
   expect(meter.sample(1536 * 1024, 1800)).toBeLessThan(faster);
+});
+
+test("a stalled transfer reads 0 B/s rather than a dash", () => {
+  expect(formatSpeed(0)).toBe("0 B/s");
+  expect(formatSpeed(0.4)).toBe("0 B/s");
+  expect(formatSpeed(Number.NaN)).toBe("0 B/s");
+  expect(formatSpeed(1536)).toBe("1.50 KB/s");
 });
