@@ -132,6 +132,7 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
   let stderrTail = "";
   let timer: number | undefined;
   let child: ChildProcess | null = null;
+  const torrent = new TorrentProgress();
   let resolveDone: (outcome: Outcome) => void = () => undefined;
   const done = new Promise<Outcome>((resolve) => {
     resolveDone = resolve;
@@ -151,7 +152,7 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
   };
   const poll = async () => {
     if (finished) return;
-    hooks.progress(spec.torrent ? await pathSize(spec.dir) : await fileSize(spec.path), spec.total);
+    hooks.progress(await fileSize(spec.path), spec.total);
   };
 
   const launch = (attempt: number) => {
@@ -175,15 +176,21 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
     });
     if (spec.torrent) {
       child.on("stdout", (text) => {
-        const tick = parseAria2Summary(text);
+        const tick = torrent.accept(parseAria2Summary(text));
         if (tick) hooks.progress(tick.received, tick.total);
       });
     }
     child.on("exit", (result) => {
       void (async () => {
         const size = spec.torrent ? await pathSize(spec.dir) : await fileSize(spec.path);
-        if (size > 0) hooks.progress(size, spec.total);
-        if (result.code === 0 || (spec.total > 0 && size >= spec.total)) {
+        const complete = result.code === 0 || (spec.total > 0 && size >= spec.total);
+        if (spec.torrent) {
+          const tick = torrent.finish(size, complete, spec.total);
+          if (tick) hooks.progress(tick.received, tick.total);
+        } else if (size > 0) {
+          hooks.progress(size, spec.total);
+        }
+        if (complete) {
           finish({ ok: true });
           return;
         }
@@ -205,8 +212,11 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
         finish({ ok: false, error: reason, canceled: false });
       })();
     });
-    timer = setInterval(() => void poll(), 300) as unknown as number;
-    void poll();
+    // A torrent's progress arrives on stdout, once a second; polling its files would undo that.
+    if (!spec.torrent) {
+      timer = setInterval(() => void poll(), 300) as unknown as number;
+      void poll();
+    }
   };
 
   launch(0);
@@ -272,6 +282,34 @@ function parseSize(value: string, unit: string): number {
   const size = Number(value.replace(/,/g, ""));
   const scale = UNITS[unit.toUpperCase()] ?? 1;
   return isFinite(size) ? Math.round(size * scale) : 0;
+}
+
+export type ProgressTick = { received: number; total: number };
+
+/**
+ * A torrent's progress, from aria2's own summary. Its files are sparse and written out of order,
+ * so their size jumps to the highest offset written long before the bytes are there; the summary's
+ * piece count is the only number that reflects what arrived.
+ */
+export class TorrentProgress {
+  private last: ProgressTick | null = null;
+
+  /** A summary line's readout; `null` until the metadata gives a total (`0B/0B` says nothing). */
+  accept(tick: ProgressTick | null): ProgressTick | null {
+    if (!tick || tick.total <= 0) return null;
+    this.last = { received: tick.received, total: tick.total };
+    return this.last;
+  }
+
+  /** The tick to leave behind when aria2c exits; the folder only fills in when no summary came. */
+  finish(folderSize: number, complete: boolean, knownTotal: number): ProgressTick | null {
+    if (this.last) {
+      const total = this.last.total;
+      return complete ? { received: total, total } : this.last;
+    }
+    if (folderSize <= 0) return null;
+    return { received: complete && knownTotal > 0 ? knownTotal : folderSize, total: knownTotal };
+  }
 }
 
 /** One of aria2's `[#gid 1.2MiB/5.0MiB(24%) CN:4 DL:1.0MiB ETA:3s]` lines, when the text holds one. */

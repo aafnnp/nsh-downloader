@@ -10,7 +10,7 @@ import {
   normalizeProxy,
   normalizeUrl,
 } from "./lib/urls";
-import { parseAria2Summary } from "./lib/transfer";
+import { parseAria2Summary, TorrentProgress } from "./lib/transfer";
 import {
   categoryOfKind,
   inScheduleWindow,
@@ -79,6 +79,23 @@ test("aria2's summary line gives progress for a torrent", () => {
   const small = parseAria2Summary("[#abc123 512KiB/1.5MiB(33%) CN:2 DL:128KiB]");
   expect(small?.received).toBe(512 * 1024);
   expect(small?.total).toBe(Math.round(1.5 * 1024 * 1024));
+});
+
+test("a torrent's progress is aria2's piece count, not its sparse files", () => {
+  const progress = new TorrentProgress();
+  expect(progress.accept(parseAria2Summary("[#abc123 0B/0B(0%) CN:0 DL:0B]"))).toBe(null);
+  const tick = progress.accept(parseAria2Summary("[#abc123 208KiB/512KiB(40%) CN:1 DL:8KiB]"));
+  expect(tick).toEqual({ received: 208 * 1024, total: 512 * 1024 });
+  // The folder already reads 507,904 bytes (97%) when only 40% has arrived.
+  expect(progress.finish(507904, false, 0)).toEqual(tick);
+  expect(progress.finish(507904, true, 0)).toEqual({ received: 512 * 1024, total: 512 * 1024 });
+});
+
+test("a torrent without a summary line falls back to its folder, and says nothing while empty", () => {
+  const progress = new TorrentProgress();
+  expect(progress.finish(0, false, 0)).toBe(null);
+  expect(progress.finish(4096, false, 0)).toEqual({ received: 4096, total: 0 });
+  expect(progress.finish(4096, true, 8192)).toEqual({ received: 8192, total: 8192 });
 });
 
 test("a .torrent file and a magnet are recognised as BitTorrent", () => {
