@@ -50,10 +50,16 @@ staging = os.path.join(root, "vendor", "extension")
 name = "Downloader-extension.zip"
 target = os.path.join(staging, name)
 
-app_version = json.load(open(os.path.join(root, "nsh.json")))["version"]
+def read_json(path):
+    # Windows' Python defaults to a legacy code page; both files are UTF-8.
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+app_version = read_json(os.path.join(root, "nsh.json"))["version"]
 # Chrome takes 1-4 dot-separated integers; a build suffix ("1.0.1+gabc") is not one.
 match = re.match(r"\d+(?:\.\d+){0,3}", app_version)
-manifest = json.load(open(os.path.join(source, "manifest.json")))
+manifest = read_json(os.path.join(source, "manifest.json"))
 if match:
     manifest["version"] = match.group(0)
 manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
@@ -84,7 +90,7 @@ if out_dir:
     shutil.copyfile(target, copy)
 
 size = os.path.getsize(target)
-print(f"✓ {name} ({size // 1024} KiB, {len(files)} files, extension {manifest['version']})")
+print(f"built {name} ({size // 1024} KiB, {len(files)} files, extension {manifest['version']})")
 PY
 
 cat > "$ASSET" <<'TS'
