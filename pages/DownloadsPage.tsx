@@ -243,7 +243,7 @@ export function DownloadsPage(props: DownloadsPageProps) {
         <View class="hidden w-36 items-center lg:flex">
           <HeaderCell label="进度" width="flex-1" key="progress" sort={sortKey()} dir={sortDir()} onSort={onSort} />
         </View>
-        <View class="hidden w-20 items-center justify-end xl:flex">
+        <View class="w-20 items-center justify-end">
           <HeaderCell label="速度" width="flex-1" key="speed" sort={sortKey()} dir={sortDir()} onSort={onSort} align="right" />
         </View>
         <View class="hidden w-16 items-center xl:flex">

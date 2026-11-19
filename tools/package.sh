@@ -58,14 +58,39 @@ reset_assets() {
   ARIA2_ONLY=__none__ ARIA2_LIST_ONLY=1 bash tools/prepare-aria2.sh >/dev/null 2>&1 || true
 }
 
+# `lib/extension-asset.ts` names the built archive while packaging; the stub is
+# what a checkout commits.
+reset_extension() {
+  bash tools/build-extension.sh --reset >/dev/null 2>&1 || true
+}
+
 # Start from an empty list so a package never absorbs a sidecar prepared for
 # another target (or a previous web/skip build). The trap restores the stub
 # afterwards: the generated file points at gitignored binaries and must not be
 # committed.
 reset_assets
-trap reset_assets EXIT
+reset_extension
+trap 'reset_assets; reset_extension' EXIT
 if [ "${SKIP_ARIA2:-0}" != 1 ] && [ "$target" != web ]; then
   prepare_sidecar
 fi
 
+# nsh package carries the extension archive inside the app; the same file also
+# lands beside the package so the release has one download for every platform.
+out_dir=.nsh/out
+previous=
+for arg in "$@"; do
+  case "$previous" in
+    --out | -o) out_dir=$arg ;;
+  esac
+  case "$arg" in
+    --out=*) out_dir=${arg#--out=} ;;
+  esac
+  previous=$arg
+done
+[ -n "$out_dir" ] || out_dir=.nsh/out
+
+bash tools/build-extension.sh
 nsh package App.tsx --target "$target" "$@"
+mkdir -p "$out_dir"
+cp vendor/extension/Downloader-extension.zip "$out_dir/"

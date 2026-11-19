@@ -37,6 +37,27 @@ jobs:
       - name: Bundle (read every warning)
         run: nsh build
 
+      # The package and the release both ship this archive; fail early when the
+      # extension files do not pack (a missing icon, a manifest Chrome refuses).
+      - name: Build the browser extension archive
+        run: |
+          set -euo pipefail
+          trap 'bash tools/build-extension.sh --reset' EXIT
+          bash tools/build-extension.sh
+          python3 - <<'PY'
+          import json, zipfile
+          archive = zipfile.ZipFile("vendor/extension/Downloader-extension.zip")
+          names = set(archive.namelist())
+          for required in ("Downloader-extension/manifest.json", "Downloader-extension/background.js", "Downloader-extension/popup.html"):
+              assert required in names, f"{required} is missing from {sorted(names)}"
+          icons = [name for name in names if name.startswith("Downloader-extension/icons/")]
+          assert icons, "the archive carries no icons"
+          manifest = json.loads(archive.read("Downloader-extension/manifest.json"))
+          assert manifest["manifest_version"] == 3
+          assert manifest["version"], "the manifest has no version"
+          print(f"{len(names)} files, extension {manifest['version']}")
+          PY
+
       - name: Headless tests
         run: nsh test --junit junit.xml
 
@@ -421,7 +442,7 @@ jobs:
             echo
             echo "Downloader 桌面版：macOS（Apple 芯片 / Intel）、Windows（x86_64 / arm64）、Linux（x86_64 / aarch64），另附网页预览版。"
             echo
-            echo "- 浏览器扩展：仓库的 \`extension/\` 目录，按 README 载入即可。"
+            echo "- 浏览器扩展：下载 \`Downloader-extension.zip\`（https://github.com/aafnnp/nsh-downloader/releases/latest/download/Downloader-extension.zip），解压后在 chrome://extensions 用「加载已解压的扩展程序」指向 \`Downloader-extension/\`；应用「设置 → 浏览器集成」里也能直接下载。"
             echo "- macOS 包为临时签名，首次打开请右键 → 打开。"
             echo "- Windows x64 下载 \`windows-x86_64\`，Windows on Arm 下载 \`windows-arm64\`；自动更新包里的 Arm64 名为 \`windows-aarch64\`。"
             echo "- Windows 包已附带对应的 Microsoft Visual C++ 运行库；启动提示 0xc000007b 通常是装错了架构。"

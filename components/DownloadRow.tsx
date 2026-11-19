@@ -245,7 +245,7 @@ export function DownloadRow(props: DownloadRowProps) {
         </Text>
       </View>
 
-      <View class="hidden w-20 justify-end xl:flex">
+      <View class="w-20 justify-end">
         <Text class="text-[11px] text-muted-foreground">
           {item().status === "running" ? formatSpeed(item().speed) : "—"}
         </Text>

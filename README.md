@@ -52,6 +52,7 @@
 
 **与浏览器配合**
 - 自带 MV3 扩展（`extension/`）：用 `webRequest` 嗅探页面里的视频 / 音频 / 播放列表 / 文件地址，一键复制。
+- 扩展包随安装包一起发布：设置 → 浏览器集成里点「下载扩展包」即可保存到下载目录（打包版离线可用），也可以复制固定的发布下载地址。
 - 应用监听剪贴板（可关）：复制后约 2 秒自动进队列，也支持手动「从剪贴板导入」和 `⌘V`。
 
 **网盘直链**
@@ -156,6 +157,20 @@ SKIP_ARIA2=1 tools/package.sh web --out dist
 
 aria2 是 GPLv2。源码：<https://github.com/aria2/aria2>；`vendor/aria2/COPYING` 与 `vendor/aria2/LICENSE.OpenSSL` 随包分发，设置 → 关于 → “查看许可证” 可以打开。
 
+## 浏览器扩展包（随包分发）
+
+扩展本身不需要构建，但发布要一个能直接下载的压缩包：
+
+```sh
+tools/build-extension.sh                # vendor/extension/Downloader-extension.zip
+tools/build-extension.sh dist           # 再复制一份到 dist/
+tools/build-extension.sh --reset        # 还原 lib/extension-asset.ts 的 stub
+```
+
+- 压缩包里是顶层 `Downloader-extension/` 目录，解压后正好是 Chrome「加载已解压的扩展程序」要选的那一层；`manifest.json` 的版本跟随 `nsh.json`，打包时间戳固定，同样的源码得到同样的 zip。
+- `tools/package.sh` 自动调用它：先让 `lib/extension-asset.ts` 指向 zip，`nsh package` 把它作为资源打进应用（设置 → 浏览器集成 →「下载扩展包」离线可保存），打包结束后还原 stub，并把同一份 zip 复制到 `--out` 目录（默认 `.nsh/out`），随安装包一起上传发布。
+- 没有内置扩展包的构建（`nsh run`、直接 `nsh package`）在设置里显示 `https://github.com/aafnnp/nsh-downloader/releases/latest/download/Downloader-extension.zip`，「下载扩展包」会打开这个地址。
+
 ## 引擎是怎么选的
 
 | 引擎 | 何时使用 | 能力 |
@@ -217,10 +232,13 @@ aria2 是 GPLv2。源码：<https://github.com/aria2/aria2>；`vendor/aria2/COPY
 
 见 [docs/browser-extension.md](./docs/browser-extension.md)。简述：
 
-1. `chrome://extensions` → 打开开发者模式 → 「加载已解压的扩展程序」→ 选 `extension/` 目录。
-2. 在网页上正常播放视频，扩展会记录 m3u8 / mp4 / mp3 / 压缩包等响应。
-3. 点扩展图标 → 勾选要下载的地址 → 「复制选中」。
-4. Downloader 开着的话，约 2 秒后自动进队列；也可以在设置 → 浏览器集成里点「从剪贴板导入」。
+1. 设置 → 浏览器集成 →「下载扩展包」，解压出 `Downloader-extension/` 文件夹；也可以从 Release 里直接下载 `Downloader-extension.zip`。
+2. `chrome://extensions` → 打开开发者模式 → 「加载已解压的扩展程序」→ 选这个文件夹。
+3. 在网页上正常播放视频，扩展会记录 m3u8 / mp4 / mp3 / 压缩包等响应。
+4. 点扩展图标 → 勾选要下载的地址 → 「复制选中」。
+5. Downloader 开着的话，约 2 秒后自动进队列；也可以在设置 → 浏览器集成里点「从剪贴板导入」。
+
+`tools/build-extension.sh` 用 `extension/` 生成 `vendor/extension/Downloader-extension.zip`（manifest 版本跟随 `nsh.json`，固定时间戳，内容可复现），并让 `lib/extension-asset.ts` 指向它；`tools/package.sh` 在打包时自动做这一步，应用内的「下载扩展包」就是这份文件，同一份 zip 也会放进 `--out` 目录随发布上传。下载地址固定为 `https://github.com/aafnnp/nsh-downloader/releases/latest/download/Downloader-extension.zip`。
 
 NSH 目前的版本还没有 URL Scheme 回调，所以扩展走剪贴板交接；收到的是同一个 JSON 结构，将来换成深链只需改扩展这边。
 
@@ -245,6 +263,8 @@ lib/
   engines.ts        aria2c / curl 探测
   aria2.ts          随包 aria2c 的解压、路径与 shell 启动
   aria2-asset.ts    生成的 sidecar 列表（提交的 stub 为空）
+  extension.ts      随包浏览器扩展包的保存与发布下载地址
+  extension-asset.ts 生成的扩展包路径（提交的 stub 为 null）
   paths.ts          目录、唯一文件名、打开与定位
   urls.ts           链接归一化、文件名推导、剪贴板载荷解析
   netdisk.ts        网盘直链识别与 Referer 规则
@@ -262,14 +282,14 @@ pages/
   DownloadsPage.tsx 列表、搜索、排序、空状态、批量操作
 extension/          浏览器扩展（MV3，无需构建）
 e2e/                真机引擎测试（不进默认测试集）
-tools/              图标生成、aria2 sidecar 准备与打包脚本、e2e 的 HTTP 服务 / 代理 / BitTorrent swarm
+tools/              图标生成、aria2 sidecar 与浏览器扩展包的构建脚本、打包脚本、e2e 的 HTTP 服务 / 代理 / BitTorrent swarm
 .github/workflows/  类型检查 + 测试 + 全平台打包 + tag 发布与更新清单
 ```
 
 ## 测试
 
 ```sh
-nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 打包（30 个用例）
+nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 与扩展打包（34 个用例）
 tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代理、磁力（需本机 curl，磁力需 aria2c）
 ```
 
@@ -279,7 +299,7 @@ tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代�
 
 ## 发布
 
-打一个 tag 就会出七个产物（macOS / Linux / Windows 各两种架构，加网页预览版）并生成 Release：
+打一个 tag 就会出七个平台产物（macOS / Linux / Windows 各两种架构，加网页预览版）、一份 `Downloader-extension.zip`，并生成 Release：
 
 ```sh
 git tag v1.0.1 && git push origin v1.0.1
@@ -293,8 +313,8 @@ git tag v1.0.1 && git push origin v1.0.1
 
 [.github/workflows/build.yml](./.github/workflows/build.yml)：
 
-- `check`：`nsh check` → `nsh build`（警告即问题）→ `nsh test`，输出 JUnit。
-- `package`：macOS（arm64 / x86_64）、Linux（x86_64 / aarch64）、Windows（x86_64 / arm64）、Web 共七个产物；桌面目标都走 `tools/package.sh`（先准备该目标的 sidecar，再 `nsh package` 打进 `.app` / `.zip` / `.tar.gz`，最后还原 stub），CI 与本地是同一条命令。Windows arm64 装的是官方 x86_64 的 aria2c，由 Windows 11 on Arm 的 x64 模拟运行。
+- `check`：`nsh check` → `nsh build`（警告即问题）→ 构建并校验浏览器扩展包 → `nsh test`，输出 JUnit。
+- `package`：macOS（arm64 / x86_64）、Linux（x86_64 / aarch64）、Windows（x86_64 / arm64）、Web 共七个产物；桌面目标都走 `tools/package.sh`（先准备该目标的 sidecar 和浏览器扩展包，再 `nsh package` 打进 `.app` / `.zip` / `.tar.gz`，最后还原 stub，并把 `Downloader-extension.zip` 放进产物目录），CI 与本地是同一条命令。Windows arm64 装的是官方 x86_64 的 aria2c，由 Windows 11 on Arm 的 x64 模拟运行。
 - `release`：打 `v*` tag 时汇总产物、用 `nsh update-manifest` 生成 `latest.json`、生成 `SHA256SUMS.txt` 与变更说明，用 `gh release` 发布。
 - `e2e`：手动触发的 macOS 真机引擎测试。
 

@@ -1,4 +1,5 @@
 import { expect, open, test, type App, type OpenOptions } from "nsh/test";
+import { hasExtensionArchive } from "./lib/extension";
 
 const KEY = "downloader.state.v1";
 
@@ -236,4 +237,35 @@ test("the scheduler keeps its start time and switch", async () => {
     },
     { timeout: 8000 },
   );
+});
+
+test("the list keeps a speed column in a window narrower than 1280", async () => {
+  const app = await inApp(STUB);
+  await app.setViewport(1100, 900);
+  await app.waitFor("text:没有下载任务", { timeout: 5000 });
+  expect(app.shows("text:速度")).toBe(true);
+});
+
+test("browser integration offers the extension archive and its address", async () => {
+  const app = await inApp(STUB);
+  await app.press("label:浏览器集成");
+  await app.waitFor("id:browser-extension-download", { timeout: 5000 });
+  await app.waitUntil(
+    () => app.texts().some((text) => text.includes("releases/latest/download/Downloader-extension.zip")),
+    { timeout: 5000 },
+  );
+
+  await app.press("id:browser-extension-copy");
+  await app.waitUntil(() => (app.clipboard() ?? "").includes("Downloader-extension.zip"), { timeout: 5000 });
+
+  await app.press("id:browser-extension-download");
+  if (hasExtensionArchive()) {
+    // `tools/build-extension.sh` ran first: the bundled archive is written out.
+    await app.waitUntil(() => app.texts().some((text) => text.startsWith("已保存到")), { timeout: 5000 });
+  } else {
+    // A plain checkout ships no archive: the button opens the release download.
+    await app.waitUntil(() => app.openedUrls().some((url) => url.includes("Downloader-extension.zip")), {
+      timeout: 5000,
+    });
+  }
 });

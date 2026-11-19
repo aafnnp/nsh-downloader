@@ -21,3 +21,6 @@ __pycache__/
 
 # prepared aria2c sidecars (build artifacts)
 vendor/aria2/current/
+
+# built browser extension archive
+vendor/extension/

@@ -1,7 +1,14 @@
-import { Scroll, signal, Text, type JSX, View, windowSize } from "nsh";
+import { Clipboard, openUrl, platform, Scroll, signal, Text, type JSX, View, windowSize } from "nsh";
 import { AlertDialog, Button, Dialog, Input, Switch } from "nsh/base";
 import { bundledAria2LicensePath, bundledAria2SslLicensePath } from "../lib/aria2";
-import { defaultDownloadDir, openDownloaded, prettyPath } from "../lib/paths";
+import {
+  EXTENSION_FOLDER_NAME,
+  EXTENSION_RELEASE_URL,
+  hasExtensionArchive,
+  saveExtensionArchive,
+} from "../lib/extension";
+import { defaultDownloadDir, openDownloaded, prettyPath, revealInFolder } from "../lib/paths";
+import { messageOf } from "../lib/probe";
 import { normalizeProxy } from "../lib/urls";
 import {
   checkUpdates,
@@ -174,6 +181,33 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const startDraft = signal(settings().scheduler.start);
   const stopDraft = signal(settings().scheduler.stop);
   const dirDraft = signal(settings().dir);
+  const extensionSaved = signal<string | null>(null);
+
+  const openExtensionDownload = async () => {
+    try {
+      const { opened } = await openUrl(EXTENSION_RELEASE_URL);
+      notify(opened ? "已在浏览器中打开发布页下载" : "没有能打开这个链接的应用", opened ? "success" : "error");
+    } catch (error) {
+      notify(`打开下载地址失败：${messageOf(error)}`, "error");
+    }
+  };
+
+  /** Writes the archive this build carries; a dev or web build opens the release instead. */
+  const downloadExtension = async () => {
+    const saved = platform.os === "web" ? null : await saveExtensionArchive().catch(() => null);
+    if (saved) {
+      extensionSaved.set(saved);
+      notify(`扩展包已保存到 ${prettyPath(saved)}`, "success");
+      void revealInFolder(saved);
+      return;
+    }
+    await openExtensionDownload();
+  };
+
+  const copyExtensionUrl = () => {
+    void Clipboard.writeText(EXTENSION_RELEASE_URL);
+    notify("下载地址已复制");
+  };
 
   const applyTime = (which: "start" | "stop") => {
     const value = (which === "start" ? startDraft() : stopDraft()).trim();
@@ -577,10 +611,41 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <Group title="浏览器扩展">
                   <View class="gap-2 px-4 py-3">
                     <Text class="text-[11px] text-foreground">把网页里的视频、音频、压缩包地址送到下载器：</Text>
-                    <Text class="text-[10px] text-muted-foreground">1. 打开浏览器扩展管理页，开启开发者模式；</Text>
-                    <Text class="text-[10px] text-muted-foreground">2. 选择「加载已解压的扩展程序」，指向仓库里的 extension/ 目录；</Text>
-                    <Text class="text-[10px] text-muted-foreground">3. 在网页上正常播放媒体，扩展会记录 m3u8 / mp4 / mp3 等响应；</Text>
-                    <Text class="text-[10px] text-muted-foreground">4. 点扩展图标勾选地址并复制，下载器会在约 2 秒后自动收下。</Text>
+                    <Text class="text-[10px] text-muted-foreground">
+                      1. 点「下载扩展包」，解压出 {EXTENSION_FOLDER_NAME} 文件夹；
+                    </Text>
+                    <Text class="text-[10px] text-muted-foreground">2. 打开浏览器扩展管理页，开启开发者模式；</Text>
+                    <Text class="text-[10px] text-muted-foreground">3. 选择「加载已解压的扩展程序」，指向这个文件夹；</Text>
+                    <Text class="text-[10px] text-muted-foreground">4. 在网页上正常播放媒体，扩展会记录 m3u8 / mp4 / mp3 等响应；</Text>
+                    <Text class="text-[10px] text-muted-foreground">5. 点扩展图标勾选地址并复制，下载器会在约 2 秒后自动收下。</Text>
+                    <View class="flex-row items-center gap-2 pt-1">
+                      <Button
+                        testID="browser-extension-download"
+                        onPress={() => void downloadExtension()}
+                        class="rounded-(--radius) bg-primary px-3 py-1.5 active:opacity-80"
+                      >
+                        <Text class="text-[10px] font-medium text-primary-foreground">下载扩展包</Text>
+                      </Button>
+                      <Button
+                        testID="browser-extension-copy"
+                        onPress={copyExtensionUrl}
+                        class="rounded-(--radius) border border-border px-3 py-1.5 hover:bg-muted active:opacity-60"
+                      >
+                        <Text class="text-[10px] text-foreground">复制下载地址</Text>
+                      </Button>
+                    </View>
+                    <Text testID="browser-extension-url" class="select-text text-[9px] text-muted-foreground">
+                      {EXTENSION_RELEASE_URL}
+                    </Text>
+                    <Text class="text-[9px] text-muted-foreground">
+                      {extensionSaved()
+                        ? `已保存到 ${prettyPath(extensionSaved() as string)}`
+                        : platform.os === "web"
+                          ? "网页预览版不能写本地文件，按钮会打开发布页下载。"
+                          : hasExtensionArchive()
+                            ? "扩展包随应用打包，下载后即可离线安装。"
+                            : "这个构建没有内置扩展包，按钮会打开发布页下载。"}
+                    </Text>
                     <View class="flex-row items-center gap-2 pt-1">
                       <Button
                         onPress={() =>
