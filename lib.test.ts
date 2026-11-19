@@ -11,6 +11,7 @@ import {
   normalizeUrl,
 } from "./lib/urls";
 import { parseAria2Summary, TorrentProgress } from "./lib/transfer";
+import { SpeedMeter } from "./lib/speed";
 import {
   categoryOfKind,
   inScheduleWindow,
@@ -198,4 +199,19 @@ test("an asset URL becomes a path a Windows fs grant matches", () => {
   const path = filePathFromUrl("file:///C:/Users/Ann%20Lee/aria2c.exe");
   expect(path.startsWith("C:/") || path.startsWith("C:\\")).toBe(true);
   expect(path.endsWith("aria2c.exe")).toBe(true);
+});
+
+test("speed comes from ticks closer together than the smoothing gap", () => {
+  const meter = new SpeedMeter(0, 0);
+  expect(meter.sample(0, 0)).toBe(0);
+  // A 300 ms poll is under the 400 ms gap; the next sample covers the whole 600 ms.
+  expect(meter.sample(256 * 1024, 300)).toBe(0);
+  const steady = meter.sample(512 * 1024, 600);
+  expect(Math.round(steady)).toBe(Math.round((512 * 1024) / 0.6));
+
+  const faster = meter.sample(1536 * 1024, 1200);
+  expect(Math.round(faster)).toBe(Math.round(steady * 0.6 + ((1024 * 1024) / 0.6) * 0.4));
+
+  // No new bytes: the reading decays instead of holding the old rate.
+  expect(meter.sample(1536 * 1024, 1800)).toBeLessThan(faster);
 });

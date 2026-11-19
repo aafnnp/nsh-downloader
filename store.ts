@@ -37,6 +37,7 @@ import {
   writableDir,
 } from "./lib/paths";
 import { messageOf, probe, type Probe } from "./lib/probe";
+import { SpeedMeter } from "./lib/speed";
 import { chooseEngine, startTransfer, type Outcome, type Transfer } from "./lib/transfer";
 import { startPlaylist } from "./lib/playlist";
 import {
@@ -94,7 +95,7 @@ export const traffic = signal<number[]>(new Array(TRAFFIC_SAMPLES).fill(0));
 export const schedulerState = signal<"off" | "waiting" | "active">("off");
 
 const transfers = new Map<string, Transfer>();
-const speeds = new Map<string, { bytes: number; at: number; value: number }>();
+const speeds = new Map<string, SpeedMeter>();
 let persistTimer: number | undefined;
 let watchTimer: number | undefined;
 let trafficTimer: number | undefined;
@@ -548,14 +549,9 @@ function launch(item: Item): void {
   const hooks = {
     progress(received: number, total: number) {
       const now = Date.now();
-      const previous = speeds.get(item.id) ?? { bytes: item.received, at: now, value: 0 };
-      const elapsed = (now - previous.at) / 1000;
-      let speed = previous.value;
-      if (elapsed >= 0.4) {
-        const instant = Math.max(0, (received - previous.bytes) / elapsed);
-        speed = previous.value > 0 ? previous.value * 0.6 + instant * 0.4 : instant;
-        speeds.set(item.id, { bytes: received, at: now, value: speed });
-      }
+      const meter = speeds.get(item.id) ?? new SpeedMeter(item.received, now);
+      speeds.set(item.id, meter);
+      const speed = meter.sample(received, now);
       patch(item.id, { received, ...(total > 0 ? { total } : {}), speed });
     },
     phase(text: string) {
