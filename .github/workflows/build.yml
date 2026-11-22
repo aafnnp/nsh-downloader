@@ -160,10 +160,15 @@ jobs:
 
       # One entry point: it prepares the target's sidecar, keeps other targets'
       # out of the asset list, packages, and restores the committed stub.
+      # `SKIP_SIGN`: a certificate made fresh on every runner is a new identity
+      # each release, so it would not keep the macOS Downloads grant anyway. The
+      # stable identity is for local builds (`tools/package.sh macos`); release
+      # signing needs a certificate persisted in secrets.
       - name: Package
         shell: bash
         env:
           ARIA2_TRIPLE: ${{ matrix.aria2_triple }}
+          SKIP_SIGN: ${{ matrix.target == 'macos' && '1' || '0' }}
         run: |
           set -euo pipefail
           bash tools/package.sh "${{ matrix.target }}" \

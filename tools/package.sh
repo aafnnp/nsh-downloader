@@ -94,3 +94,25 @@ bash tools/build-extension.sh
 nsh package App.tsx --target "$target" "$@"
 mkdir -p "$out_dir"
 cp vendor/extension/Downloader-extension.zip "$out_dir/"
+
+# An ad-hoc signature (what `nsh package` writes) carries the build's own code
+# hash as its designated requirement, so macOS sees every rebuild as another app
+# and asks for the Downloads folder again. `tools/sign-macos.sh` signs with a
+# stable identity instead; SKIP_SIGN=1 keeps the ad-hoc signature.
+if [ "$target" = macos ]; then
+  app_path="$out_dir/Downloader.app"
+  if [ "${SKIP_SIGN:-0}" = 1 ]; then
+    echo "warning: SKIP_SIGN=1 leaves $app_path ad hoc signed; macOS asks for the Downloads folder again after every build" >&2
+  elif [ -d "$app_path" ]; then
+    bash tools/sign-macos.sh "$app_path"
+    # The updater archive nsh wrote holds the unsigned copy: rebuild it from the signed app.
+    for archive in "$out_dir"/Downloader-*-macos-*.tar.gz; do
+      [ -f "$archive" ] || continue
+      staging=$(mktemp -d)
+      cp -R "$app_path" "$staging/"
+      tar -czf "$archive" -C "$staging" Downloader.app
+      rm -rf "$staging"
+      echo "rebuilt $archive from the signed app"
+    done
+  fi
+fi
