@@ -31,14 +31,17 @@ import {
   fileSize,
   filenameOf,
   pathSize,
+  removeIfPresent,
   removePartsDir,
+  removeTree,
   uniqueDir,
   uniquePath,
   writableDir,
 } from "./lib/paths";
 import { messageOf, probe, type Probe } from "./lib/probe";
+import { canRestart, restartApp } from "./lib/restart";
 import { SpeedMeter } from "./lib/speed";
-import { chooseEngine, startTransfer, type Outcome, type Transfer } from "./lib/transfer";
+import { aria2TakesProxy, chooseEngine, startTransfer, type Outcome, type Transfer } from "./lib/transfer";
 import { startPlaylist } from "./lib/playlist";
 import {
   extractUrls,
@@ -156,6 +159,42 @@ async function writeState(payload: string): Promise<void> {
 function patch(id: string, changes: Partial<Item>, persist = false): void {
   items.update((list) => list.map((item) => (item.id === id ? { ...item, ...changes } : item)));
   if (persist) schedulePersist();
+}
+
+/** Writes the queue and settings now, for a quit or restart that will not wait for the debounce. */
+export async function flushState(): Promise<void> {
+  if (persistTimer !== undefined) {
+    clearTimeout(persistTimer);
+    persistTimer = undefined;
+  }
+  await writeState(JSON.stringify({ settings: settings(), items: items() }));
+}
+
+export type RestartOutcome = "restarted" | "reloaded" | "unsupported";
+
+/**
+ * Applies the saved settings the way a restart does: every transfer stops, the
+ * saved state is read again, and the engines are scanned afresh. A packaged app
+ * quits and starts again; a development run cannot start itself, so the app is
+ * reloaded in place instead of closing for good.
+ */
+export async function restartAndApply(): Promise<RestartOutcome> {
+  if (!canRestart) return "unsupported";
+  pauseAll();
+  // A cancelled transfer settles in its outcome handler; the row has to read
+  // paused before the save below.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await flushState();
+  if (restartApp()) return "restarted";
+
+  transfers.clear();
+  speeds.clear();
+  selection.set([]);
+  traffic.set(new Array(TRAFFIC_SAMPLES).fill(0));
+  notice.set(null);
+  resetBundledAria2();
+  await bootstrap();
+  return "reloaded";
 }
 
 function setStatus(id: string, status: Status, error: string | null = null): void {
@@ -541,10 +580,19 @@ function launch(item: Item): void {
     patch(item.id, { status: "failed", error: "磁力/种子下载需要 aria2c，装好后点重试" }, true);
     return;
   }
-  const engine: EngineId = item.playlist ? "segments" : chooseEngine(item.total, current.engine, item.torrent);
+  if (item.torrent && !aria2TakesProxy(current.proxy)) {
+    patch(item.id, { status: "failed", error: "aria2c 不支持 SOCKS 代理：磁力/种子请改用 HTTP 代理" }, true);
+    return;
+  }
+  const engine: EngineId = item.playlist
+    ? "segments"
+    : chooseEngine(item.total, current.engine, item.torrent, current.proxy);
 
   setStatus(item.id, "running");
   patch(item.id, { engine, startedAt: item.startedAt ?? Date.now() });
+  // From the launch, not the first tick: aria2's first summary arrives a second
+  // in, and the bytes before it are part of the rate too.
+  speeds.set(item.id, new SpeedMeter(item.received, Date.now()));
 
   const hooks = {
     progress(received: number, total: number) {
@@ -697,6 +745,29 @@ export function removeMany(ids: string[]): void {
   selection.update((list) => list.filter((id) => !wanted.has(id)));
   schedulePersist();
   setTimeout(() => pump(), 50);
+}
+
+/**
+ * Removes the rows; with `files`, what they downloaded goes too: one file (and
+ * aria2's control file), or a torrent's own folder.
+ */
+export async function deleteItems(ids: string[], files: boolean): Promise<void> {
+  const wanted = new Set(ids);
+  const going = items().filter((item) => wanted.has(item.id));
+  if (going.length === 0) return;
+  const stopped = going.some((item) => transfers.has(item.id));
+  removeMany(going.map((item) => item.id));
+  if (!files) return;
+  // A cancelled engine lets go of its file first, which Windows requires before unlinking.
+  if (stopped) await new Promise((resolve) => setTimeout(resolve, 400));
+  const kept = new Set(items().map((item) => (item.torrent ? item.dir : join(item.dir, item.filename))));
+  for (const item of going) {
+    const target = item.torrent ? item.dir : join(item.dir, item.filename);
+    if (kept.has(target)) continue;
+    await removeTree(target);
+    if (!item.torrent) await removeIfPresent(`${target}.aria2`);
+    if (item.playlist) await removePartsDir(join(item.dir, `.${item.filename}.parts`));
+  }
 }
 
 export function clearFinished(): number {
@@ -969,6 +1040,12 @@ export async function bootstrap(): Promise<void> {
       });
     } catch {
       // A host without the event still downloads from links and drops.
+    }
+    try {
+      // A quit keeps the last settings even when it lands inside the persist debounce.
+      Application.on("quit", () => flushState());
+    } catch {
+      // A host without the event still persists on the debounce.
     }
   }
 

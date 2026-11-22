@@ -42,12 +42,24 @@ export interface Transfer {
 /** The built-in engine writes a file in one call, so it keeps to what `writeFile` takes. */
 const JS_LIMIT = 7 * 1024 * 1024;
 
-/** aria2c when it is installed, else curl, else the built-in engine (small files only). */
-export function chooseEngine(total: number, preference: "auto" | EngineId, torrent = false): EngineId {
+/** aria2c reads only `http://` proxies; curl takes the SOCKS ones too. */
+export function aria2TakesProxy(proxy: string): boolean {
+  return !/^socks/i.test(proxy.trim());
+}
+
+/** aria2c when it is installed and takes the proxy, else curl, else the built-in engine (small files only). */
+export function chooseEngine(
+  total: number,
+  preference: "auto" | EngineId,
+  torrent = false,
+  proxy = "",
+): EngineId {
   if (torrent) return "aria2";
-  if (preference !== "auto" && engineAvailable(preference)) return preference;
+  const usable = (id: EngineId) =>
+    engineAvailable(id) && (id !== "aria2" || aria2TakesProxy(proxy));
+  if (preference !== "auto" && usable(preference)) return preference;
   for (const id of ["aria2", "curl", "js"] as EngineId[]) {
-    if (!engineAvailable(id)) continue;
+    if (!usable(id)) continue;
     if (id === "js" && total > JS_LIMIT) continue;
     return id;
   }
@@ -77,8 +89,10 @@ function aria2Args(spec: TransferSpec): string[] {
       `--split=${connections}`,
       "--min-split-size=1M",
       "--auto-file-renaming=false",
-      "--console-log-level=warn",
-      "--summary-interval=0",
+      // The summary is the byte count: with several connections aria2 writes the
+      // last range first, so the file's size jumps to the highest offset at once.
+      "--console-log-level=notice",
+      "--summary-interval=1",
       "-o",
       spec.filename,
     );
@@ -132,7 +146,7 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
   let stderrTail = "";
   let timer: number | undefined;
   let child: ChildProcess | null = null;
-  const torrent = new TorrentProgress();
+  const progress = new Aria2Progress();
   let resolveDone: (outcome: Outcome) => void = () => undefined;
   const done = new Promise<Outcome>((resolve) => {
     resolveDone = resolve;
@@ -166,6 +180,8 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
         // folder can sit outside those roots (a mounted volume). Both engines
         // get absolute paths, so the working directory does not pick the file.
         cwd: processModule.dataDir ?? spec.dir,
+        // aria2's summaries are read by the line; a chunk could split one.
+        lines: engine === "aria2",
       });
     } catch (error) {
       finish({ ok: false, error: messageOf(error), canceled: false });
@@ -174,9 +190,11 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
     child.on("stderr", (text) => {
       stderrTail = (stderrTail + text).slice(-2000);
     });
-    if (spec.torrent) {
+    if (engine === "aria2") {
+      // A torrent's summary and an HTTP download's alike carry the completed
+      // length, which is the only count the sparse file on disk does not inflate.
       child.on("stdout", (text) => {
-        const tick = torrent.accept(parseAria2Summary(text));
+        const tick = progress.accept(parseAria2Summary(text));
         if (tick) hooks.progress(tick.received, tick.total);
       });
     }
@@ -184,8 +202,8 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
       void (async () => {
         const size = spec.torrent ? await pathSize(spec.dir) : await fileSize(spec.path);
         const complete = result.code === 0 || (spec.total > 0 && size >= spec.total);
-        if (spec.torrent) {
-          const tick = torrent.finish(size, complete, spec.total);
+        if (engine === "aria2") {
+          const tick = progress.finish(size, complete, spec.total);
           if (tick) hooks.progress(tick.received, tick.total);
         } else if (size > 0) {
           hooks.progress(size, spec.total);
@@ -212,8 +230,10 @@ function startProcess(spec: TransferSpec, engine: "aria2" | "curl", hooks: Trans
         finish({ ok: false, error: reason, canceled: false });
       })();
     });
-    // A torrent's progress arrives on stdout, once a second; polling its files would undo that.
-    if (!spec.torrent) {
+    // curl writes the file in order, so its size is the count; aria2's file is
+    // sparse, and its own summary above is the count.
+    if (engine === "curl") {
+      stopPolling();
       timer = setInterval(() => void poll(), 300) as unknown as number;
       void poll();
     }
@@ -287,11 +307,11 @@ function parseSize(value: string, unit: string): number {
 export type ProgressTick = { received: number; total: number };
 
 /**
- * A torrent's progress, from aria2's own summary. Its files are sparse and written out of order,
- * so their size jumps to the highest offset written long before the bytes are there; the summary's
- * piece count is the only number that reflects what arrived.
+ * aria2's own progress, from its summary lines. Its file on disk is not the count:
+ * a multi-connection download extends it to the highest offset written long before
+ * the bytes are there, and a torrent's files are sparse and written out of order.
  */
-export class TorrentProgress {
+export class Aria2Progress {
   private last: ProgressTick | null = null;
 
   /** A summary line's readout; `null` until the metadata gives a total (`0B/0B` says nothing). */
@@ -301,14 +321,14 @@ export class TorrentProgress {
     return this.last;
   }
 
-  /** The tick to leave behind when aria2c exits; the folder only fills in when no summary came. */
-  finish(folderSize: number, complete: boolean, knownTotal: number): ProgressTick | null {
+  /** The tick to leave behind when aria2c exits; the size on disk only fills in when no summary came. */
+  finish(diskSize: number, complete: boolean, knownTotal: number): ProgressTick | null {
     if (this.last) {
       const total = this.last.total;
       return complete ? { received: total, total } : this.last;
     }
-    if (folderSize <= 0) return null;
-    return { received: complete && knownTotal > 0 ? knownTotal : folderSize, total: knownTotal };
+    if (diskSize <= 0) return null;
+    return { received: complete && knownTotal > 0 ? knownTotal : diskSize, total: knownTotal };
   }
 }
 

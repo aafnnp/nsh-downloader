@@ -9,6 +9,8 @@ import {
 } from "../lib/extension";
 import { defaultDownloadDir, openDownloaded, prettyPath, revealInFolder } from "../lib/paths";
 import { messageOf } from "../lib/probe";
+import { canRestart, canRelaunch } from "../lib/restart";
+import { findSystemProxy } from "../lib/systemProxy";
 import { normalizeProxy } from "../lib/urls";
 import {
   checkUpdates,
@@ -33,6 +35,7 @@ import {
   items,
   notify,
   rescanEngines,
+  restartAndApply,
   schedulerState,
   settings,
   updateCategoryDir,
@@ -182,6 +185,52 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const stopDraft = signal(settings().scheduler.stop);
   const dirDraft = signal(settings().dir);
   const extensionSaved = signal<string | null>(null);
+  const proxyScan = signal(false);
+  const restarting = signal(false);
+
+  /** Takes the proxy the OS has configured, so the engines can use it without retyping. */
+  const importSystemProxy = async () => {
+    if (proxyScan()) return;
+    proxyScan.set(true);
+    try {
+      const found = await findSystemProxy();
+      if (!found.proxy) {
+        notify(found.reason ?? "没有检测到系统代理", "error");
+        return;
+      }
+      updateSettings({ proxy: found.proxy });
+      notify(`已导入系统代理：${found.proxy}，重启后全部生效`, "success");
+    } finally {
+      proxyScan.set(false);
+    }
+  };
+
+  /** Saves first: a restart quits the app, and the debounced write would be lost. */
+  const confirmRestart = async () => {
+    if (restarting()) return;
+    const { action } = await AlertDialog.show({
+      title: canRelaunch() ? "重启应用？" : "重新载入？",
+      description: canRelaunch()
+        ? "正在下载的任务会先暂停并保存，重启后按新设置继续；点继续即可接着下载。"
+        : "正在下载的任务会先暂停并保存，随后重新载入设置与队列（开发运行不能退出再启动）。",
+      actions: [
+        { id: "cancel", label: "取消", role: "cancel" },
+        { id: "restart", label: canRelaunch() ? "重启" : "重新载入", role: "destructive" },
+      ],
+    });
+    if (action !== "restart") return;
+    restarting.set(true);
+    const outcome = await restartAndApply();
+    if (outcome === "restarted") return;
+    restarting.set(false);
+    if (outcome === "reloaded") {
+      // A development run cannot start itself; the state is already reloaded.
+      props.onOpenChange(false);
+      notify("开发运行不能自我重启：设置已重新载入并生效", "success");
+      return;
+    }
+    notify("这个环境不能重启应用，请手动退出后重新打开", "error");
+  };
 
   const openExtensionDownload = async () => {
     try {
@@ -481,16 +530,29 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         placeholder="http://127.0.0.1:7890"
                         class="flex-1 rounded-(--radius) border border-input bg-background px-2.5 py-1.5 font-mono text-[10px] text-foreground"
                       />
+                      <Button
+                        testID="proxy-import"
+                        disabled={proxyScan()}
+                        onPress={() => void importSystemProxy()}
+                        class="rounded-(--radius) border border-border px-2.5 py-1.5 hover:bg-muted active:opacity-60 disabled:opacity-40"
+                      >
+                        <Text class="text-[10px] text-foreground">{proxyScan() ? "检测中…" : "导入系统代理"}</Text>
+                      </Button>
+                    </View>
+                    <View class="flex-row items-center gap-2">
                       <Segmented
                         options={PROXIES}
                         value={settings().proxy}
                         onSelect={(id) => updateSettings({ proxy: id })}
                       />
+                      <Text class="text-[9px] text-muted-foreground">常用代理</Text>
                     </View>
                     <Text class="text-[9px] text-muted-foreground">
                       {settings().proxy.trim() && !normalizeProxy(settings().proxy)
                         ? "地址看不出端口，下载时会退回直连。"
-                        : "aria2c 与 curl 都走它；留空直连。HLS/DASH 分片用系统网络。"}
+                        : /^socks/i.test(settings().proxy.trim())
+                          ? "socks 代理走 curl；aria2c 只认 HTTP 代理，磁力/种子请用 HTTP 代理。"
+                          : "aria2c 与 curl 都走它；留空直连。HLS/DASH 分片用系统网络。"}
                     </Text>
                   </View>
                   <Field title="下载引擎" detail="自动会用 aria2c → curl → 内置依次回退">
@@ -537,6 +599,35 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     >
                       <Text class="text-[10px] text-foreground">{engineScan() ? "检测中…" : "检测"}</Text>
                     </Button>
+                  </Field>
+                </Group>
+
+                <Group title="应用">
+                  <Field
+                    title="重启应用"
+                    detail={
+                      !canRestart
+                        ? "网页预览没有可重启的进程；设置改动对之后开始的任务生效"
+                        : canRelaunch()
+                          ? "代理、引擎、线程数等改动只对之后开始的任务生效；重启后全部按新设置重新开始"
+                          : "开发运行（nsh run）不能自我重启：这里会重新载入设置与队列，效果等同一次重启"
+                    }
+                  >
+                    <If
+                      when={canRestart}
+                      else={<Text class="text-[10px] text-muted-foreground">网页预览不能重启</Text>}
+                    >
+                      <Button
+                        testID="settings-restart"
+                        disabled={restarting()}
+                        onPress={() => void confirmRestart()}
+                        class="rounded-(--radius) border border-border px-2.5 py-1 hover:bg-muted active:opacity-60 disabled:opacity-40"
+                      >
+                        <Text class="text-[10px] text-foreground">
+                          {restarting() ? "重启中…" : canRelaunch() ? "重启" : "重新载入"}
+                        </Text>
+                      </Button>
+                    </If>
                   </Field>
                 </Group>
               </View>

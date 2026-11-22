@@ -11,10 +11,10 @@ import {
 } from "../lib/format";
 import { engineLabel } from "../lib/engines";
 import { openDownloaded, prettyPath, revealInFolder } from "../lib/paths";
+import { confirmRemove } from "../lib/removeTasks";
 import {
   notify,
   pause,
-  remove,
   resume,
   retry,
   selectedItem,
@@ -204,10 +204,7 @@ function DetailsBody(props: { item: () => Item }) {
             </Button>
           </If>
           <Button
-            onPress={() => {
-              remove(item().id);
-              notify(`已移除 ${item().filename}`);
-            }}
+            onPress={() => void confirmRemove([item().id])}
             class="rounded-(--radius) border border-destructive px-2 py-1 hover:bg-muted active:opacity-60"
           >
             <Text class="text-[10px] text-destructive">移除</Text>

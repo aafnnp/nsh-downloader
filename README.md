@@ -24,11 +24,13 @@
 - 队列与并发：同时任务数 1–8，单文件连接数 1–16。
 - 优先级：高 / 普通 / 低，调度器按优先级出队；右键可「立即开始」。
 - 进度、速度、剩余时间实时刷新；暂停 / 继续 / 重试 / 打开 / 在文件夹中显示 / 移除。
+- 移除时会问一次：`仅删除任务` 保留磁盘上的文件，`同时删除文件` 连文件一起删（种子任务删掉它自己的文件夹，分片缓存也清掉）。
 
 **带宽管理**
 - FDM 式流量模式：不限、低（64 KB/s）、中（512 KB/s）、高（2 MB/s）、自定义。
 - 每个下载可以单独设 KB/s 上限，或跟随全局。
 - 代理：`http://127.0.0.1:7890`、`socks5://127.0.0.1:1080` 或直接 `host:port`，aria2c 与 curl 都会走它。
+- 一键「导入系统代理」：macOS 读 `scutil --proxy`，Windows 读 Internet 设置，Linux 读 GNOME / KDE 的代理；导入后仍可手改。
 
 **智能分类**
 - 文件按类型进入视频 / 音乐 / 文档 / 程序 / 压缩包 / 其他。
@@ -66,6 +68,8 @@
 
 **其它**
 - 记录与设置持久化，重启后恢复队列（未完成的标为已暂停）。
+- 设置 → 网络与引擎里的「重启」会先暂停并保存队列，再重启应用：代理、引擎、线程数这类只对之后任务生效的改动，重启后对全部任务生效。打包版真的退出再启动；`nsh run` 的开发宿主被 nsh 停掉后不会自己回来，那里改为原地重新载入设置与队列（按钮读作「重新载入」）。
+- 进度与速度取的是引擎自己报的已完成字节（aria2c 的 summary、curl 的写入量），不是磁盘上稀疏文件的大小，所以多线程下载时两者对得上。
 - 搜索文件名 / 链接 / 备注；支持多选、全选、批量开始 / 暂停 / 移除。
 - 快捷键：`⌘N` 新建、`⌘V` 从剪贴板导入、`⌘,` 设置、`⌘1` 全部、`⌘2` 未完成、`⌘3` 已完成、`⌘4` 失败、`⌘5` 视频；`Delete` 移除选中，`Space` 暂停 / 继续选中。
 - 拖放 `.txt` / 链接清单 / `.torrent` 到窗口也能识别。
@@ -282,14 +286,14 @@ pages/
   DownloadsPage.tsx 列表、搜索、排序、空状态、批量操作
 extension/          浏览器扩展（MV3，无需构建）
 e2e/                真机引擎测试（不进默认测试集）
-tools/              图标生成、aria2 sidecar 与浏览器扩展包的构建脚本、打包脚本、e2e 的 HTTP 服务 / 代理 / BitTorrent swarm
+tools/              图标生成、aria2 sidecar 与浏览器扩展包的构建脚本、打包与 macOS 稳定签名脚本、e2e 的 HTTP 服务 / 代理 / BitTorrent swarm
 .github/workflows/  类型检查 + 测试 + 全平台打包 + tag 发布与更新清单
 ```
 
 ## 测试
 
 ```sh
-nsh test                       # App.test.tsx + lib.test.ts：界面、分类、调度、右键菜单、解析、aria2 与扩展打包（34 个用例）
+nsh test                       # App.test.tsx + lib.test.ts：界面、删除确认、分类、调度、右键菜单、系统代理解析、aria2 与扩展打包（44 个用例）
 tools/run-e2e.sh               # 真下载：1 MB / 12 MB、HLS、AES-128、代理、磁力（需本机 curl，磁力需 aria2c）
 ```
 
@@ -318,7 +322,7 @@ git tag v1.0.1 && git push origin v1.0.1
 - `release`：打 `v*` tag 时汇总产物、用 `nsh update-manifest` 生成 `latest.json`、生成 `SHA256SUMS.txt` 与变更说明，用 `gh release` 发布。
 - `e2e`：手动触发的 macOS 真机引擎测试。
 
-macOS 包是临时签名（ad hoc），首次打开需要右键 → 打开。
+macOS 包默认是临时签名（ad hoc）：它的 designated requirement 就是这次构建的代码哈希，于是每次重新打包，macOS 都把它当成另一个应用，「想要访问“下载”文件夹」的授权也随之重问。`tools/package.sh macos` 打完包会调用 `tools/sign-macos.sh` 用固定身份重签——首次运行在 `~/.nsh-signing/downloader-signing.keychain-db` 里生成一次自签名证书（独立钥匙串，不动登录钥匙串），之后每次的 requirement 都是 `identifier "dev.nsh.downloader" and certificate leaf = H"…"`，重建多少次都不变，授权只问一次；随后还会用签名后的 `.app` 重建自动更新包。已有正式证书就设 `DOWNLOADER_SIGN_IDENTITY`，不想签就设 `SKIP_SIGN=1`（回到旧行为）。`nsh run` 不需要这一步：开发宿主是 nsh 自己的应用。
 
 ## 已知限制
 

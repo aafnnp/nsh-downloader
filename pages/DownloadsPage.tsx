@@ -1,6 +1,7 @@
 import { computed, List, signal, Text, View } from "nsh";
 import { Button } from "nsh/base";
 import { formatSpeed, percentOf } from "../lib/format";
+import { confirmRemove } from "../lib/removeTasks";
 import {
   activeCount,
   clearFinished,
@@ -13,7 +14,6 @@ import {
   pausedCount,
   queuedCount,
   ready,
-  remove,
   resumeAll,
   selectMany,
   selectOnly,
@@ -266,11 +266,7 @@ export function DownloadsPage(props: DownloadsPageProps) {
             selected={selection().includes(item().id)}
             onToggleSelect={() => toggleSelect(item().id)}
             onSelect={(additive) => (additive ? toggleSelect(item().id) : selectOnly(item().id))}
-            onRemove={() => {
-              const removed = item();
-              remove(removed.id);
-              notify(`已移除 ${removed.filename}`);
-            }}
+            onRemove={() => void confirmRemove([item().id])}
           />
         )}
       </List>

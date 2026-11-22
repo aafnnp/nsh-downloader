@@ -15,7 +15,6 @@ import {
   notify,
   pause,
   pauseAll,
-  removeMany,
   resume,
   resumeAll,
   selectedItem,
@@ -23,6 +22,7 @@ import {
   updateSettings,
 } from "./store";
 import { CATEGORY_ORDER, type Category } from "./model";
+import { confirmRemove } from "./lib/removeTasks";
 import { checkUpdates, updaterSupported } from "./lib/update";
 
 function App() {
@@ -117,7 +117,7 @@ function App() {
   keymap.bind("mod+4", () => nav.set("failed"));
   keymap.bind("mod+5", () => nav.set(CATEGORY_ORDER[0]));
   keymap.bind("delete", () => {
-    if (selection().length > 0) removeMany(selection());
+    if (selection().length > 0) void confirmRemove(selection());
   });
   keymap.bind("space", () => {
     const item = selectedItem();

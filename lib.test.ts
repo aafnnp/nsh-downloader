@@ -10,8 +10,9 @@ import {
   normalizeProxy,
   normalizeUrl,
 } from "./lib/urls";
-import { parseAria2Summary, TorrentProgress } from "./lib/transfer";
+import { Aria2Progress, parseAria2Summary } from "./lib/transfer";
 import { SpeedMeter } from "./lib/speed";
+import { parseGnomeProxy, parseKdeProxy, parseScutilProxy, parseWindowsProxy } from "./lib/systemProxy";
 import { formatSpeed } from "./lib/format";
 import {
   categoryOfKind,
@@ -83,18 +84,18 @@ test("aria2's summary line gives progress for a torrent", () => {
   expect(small?.total).toBe(Math.round(1.5 * 1024 * 1024));
 });
 
-test("a torrent's progress is aria2's piece count, not its sparse files", () => {
-  const progress = new TorrentProgress();
+test("aria2's summary is the byte count, not the sparse file on disk", () => {
+  const progress = new Aria2Progress();
   expect(progress.accept(parseAria2Summary("[#abc123 0B/0B(0%) CN:0 DL:0B]"))).toBe(null);
   const tick = progress.accept(parseAria2Summary("[#abc123 208KiB/512KiB(40%) CN:1 DL:8KiB]"));
   expect(tick).toEqual({ received: 208 * 1024, total: 512 * 1024 });
-  // The folder already reads 507,904 bytes (97%) when only 40% has arrived.
+  // The file on disk already reads 507,904 bytes (97%) when only 40% has arrived.
   expect(progress.finish(507904, false, 0)).toEqual(tick);
   expect(progress.finish(507904, true, 0)).toEqual({ received: 512 * 1024, total: 512 * 1024 });
 });
 
-test("a torrent without a summary line falls back to its folder, and says nothing while empty", () => {
-  const progress = new TorrentProgress();
+test("without a summary line, the file on disk is the fallback", () => {
+  const progress = new Aria2Progress();
   expect(progress.finish(0, false, 0)).toBe(null);
   expect(progress.finish(4096, false, 0)).toEqual({ received: 4096, total: 0 });
   expect(progress.finish(4096, true, 8192)).toEqual({ received: 8192, total: 8192 });
@@ -222,4 +223,51 @@ test("a stalled transfer reads 0 B/s rather than a dash", () => {
   expect(formatSpeed(0.4)).toBe("0 B/s");
   expect(formatSpeed(Number.NaN)).toBe("0 B/s");
   expect(formatSpeed(1536)).toBe("1.50 KB/s");
+});
+
+test("a macOS system proxy is the enabled HTTPS, HTTP or SOCKS entry", () => {
+  const scutil = [
+    "<dictionary> {",
+    "  ExceptionsList : <array> {",
+    "    0 : *.local",
+    "    1 : 127.0.0.1",
+    "  }",
+    "  HTTPEnable : 1",
+    "  HTTPPort : 7890",
+    "  HTTPProxy : 127.0.0.1",
+    "  HTTPSEnable : 1",
+    "  HTTPSPort : 7891",
+    "  HTTPSProxy : 127.0.0.1",
+    "  ProxyAutoConfigEnable : 0",
+    "  SOCKSEnable : 0",
+    "}",
+  ].join("\n");
+  expect(parseScutilProxy(scutil)).toBe("http://127.0.0.1:7891");
+  const socks = ["SOCKSEnable : 1", "SOCKSPort : 1080", "SOCKSProxy : 127.0.0.1", "HTTPEnable : 0"].join("\n");
+  expect(parseScutilProxy(socks)).toBe("socks5://127.0.0.1:1080");
+  expect(parseScutilProxy("HTTPEnable : 0")).toBe("");
+});
+
+test("a Windows system proxy is the bare host:port or the https entry", () => {
+  expect(parseWindowsProxy("127.0.0.1:7890")).toBe("http://127.0.0.1:7890");
+  expect(parseWindowsProxy("http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=127.0.0.1:7890")).toBe(
+    "http://127.0.0.1:7891",
+  );
+  expect(parseWindowsProxy("socks=127.0.0.1:1080")).toBe("socks5://127.0.0.1:1080");
+  expect(parseWindowsProxy("")).toBe("");
+});
+
+test("GNOME's manual proxy uses HTTP, then SOCKS, and nothing outside manual", () => {
+  expect(parseGnomeProxy("'manual'", "'127.0.0.1'", "7890", "''", "0")).toBe("http://127.0.0.1:7890");
+  expect(parseGnomeProxy("'manual'", "''", "0", "'127.0.0.1'", "1080")).toBe("socks5://127.0.0.1:1080");
+  expect(parseGnomeProxy("'none'", "'127.0.0.1'", "7890", "''", "0")).toBe("");
+});
+
+test("KDE's kioslaverc is read only in manual proxy mode", () => {
+  const manual = "[Proxy Settings]\nProxyType=1\nhttpProxy=http://127.0.0.1:7890\nhttpsProxy=http://127.0.0.1:7891\n";
+  expect(parseKdeProxy(manual)).toBe("http://127.0.0.1:7891");
+  expect(parseKdeProxy("[Proxy Settings]\nProxyType=1\nsocksProxy=socks://127.0.0.1:1080\n")).toBe(
+    "socks5://127.0.0.1:1080",
+  );
+  expect(parseKdeProxy("[Proxy Settings]\nProxyType=0\nhttpProxy=http://127.0.0.1:7890\n")).toBe("");
 });

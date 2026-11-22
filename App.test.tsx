@@ -28,9 +28,8 @@ function fakeFs(files: Map<string, number>) {
     "fs/promises": {
       mkdir: () => undefined,
       stat: (path: string) => {
-        const size = files.get(path);
-        if (size === undefined) throw new Error("ENOENT");
-        return { isFile: () => true, isDirectory: () => false, size };
+        if (!files.has(path)) throw new Error("ENOENT");
+        return { isFile: () => true, isDirectory: () => false, size: files.get(path) ?? 0 };
       },
       exists: (path: string) => files.has(path),
       readdir: () => [],
@@ -39,15 +38,23 @@ function fakeFs(files: Map<string, number>) {
         files.delete(path);
       },
       writeFile: (path: string, data: string | Uint8Array) => {
-        files.set(path, typeof data === "string" ? data.length : data.byteLength);
+        // The engine hands the bytes over as a native array, which exposes no length here.
+        const size = typeof data === "string" ? data.length : Number((data as { byteLength?: number })?.byteLength ?? 0);
+        files.set(path, size);
       },
       readFile: () => "",
     },
   };
 }
 
-function inApp(network: OpenOptions["network"], clipboard?: string, items: unknown[] = []) {
-  const files = new Map<string, number>();
+function inApp(
+  network: OpenOptions["network"],
+  clipboard?: string,
+  items: unknown[] = [],
+  extraModules: NonNullable<OpenOptions["modules"]> = {},
+  disk: Map<string, number> = new Map<string, number>(),
+) {
+  const files = disk;
   return open("./App.tsx", {
     platform: "macos",
     width: 1400,
@@ -55,7 +62,7 @@ function inApp(network: OpenOptions["network"], clipboard?: string, items: unkno
     storage: seeded(items),
     network,
     clipboard: clipboard ?? null,
-    modules: fakeFs(files),
+    modules: { ...fakeFs(files), ...extraModules },
   });
 }
 
@@ -102,6 +109,49 @@ test("a file name from content-disposition names the row", async () => {
   await app.waitFor("text:clip.mp4", { timeout: 10000 });
   expect(app.texts()).toContain("VID");
   await app.waitUntil(() => app.count("text:已完成") >= 2, { timeout: 10000 });
+});
+
+/** The alert a test answers for, without the native dialog a headless engine draws. */
+function alertAnswer(action: string | null) {
+  return {
+    "nsh/base": {
+      "AlertDialog.show": async (options: { actions: { id: string; label: string }[] }) => {
+        expect(options.actions.map((entry) => entry.id)).toEqual(["cancel", "task", "files"]);
+        return { action };
+      },
+    },
+  };
+}
+
+async function pressRemove(answer: string | null, disk: Map<string, number>) {
+  const app = await inApp(STUB, undefined, [], alertAnswer(answer), disk);
+  await addLink(app, "http://files.test/clip.mp4");
+  await app.waitUntil(() => app.count("text:已完成") >= 2, { timeout: 10000 });
+  expect(disk.has("/tmp/downloader-nsh-test/clip.mp4")).toBe(true);
+  await app.press("label:移除 clip.mp4");
+  return app;
+}
+
+test("removing a download asks about the file, and 仅删除任务 keeps it", async () => {
+  const disk = new Map<string, number>();
+  const app = await pressRemove("task", disk);
+  await app.waitUntil(() => app.count("text:clip.mp4") === 0, { timeout: 5000 });
+  expect(disk.has("/tmp/downloader-nsh-test/clip.mp4")).toBe(true);
+});
+
+test("the file goes too when the dialog says so", async () => {
+  const disk = new Map<string, number>();
+  const app = await pressRemove("files", disk);
+  await app.waitUntil(() => app.count("text:clip.mp4") === 0, { timeout: 5000 });
+  // The row leaves first; the unlink follows the cancel settling.
+  await app.waitUntil(() => !disk.has("/tmp/downloader-nsh-test/clip.mp4"), { timeout: 5000 });
+});
+
+test("closing the dialog leaves the download in place", async () => {
+  const disk = new Map<string, number>();
+  const app = await pressRemove(null, disk);
+  await app.wait(500);
+  expect(app.texts()).toContain("clip.mp4");
 });
 
 test("text without a link is refused with a notice", async () => {
@@ -157,6 +207,25 @@ test("a proxy typed in settings is kept and shown when it parses", async () => {
   await app.waitUntil(() => app.texts().includes("socks5://127.0.0.1:1080"), { timeout: 5000 });
 });
 
+test("the network settings import the system's proxy", async () => {
+  const app = await inApp(STUB, undefined, [], {
+    process: {
+      run: async (command: string) => {
+        if (command === "sh") {
+          return { code: 0, stdout: "HTTPEnable : 1\nHTTPPort : 7890\nHTTPProxy : 127.0.0.1\n", stderr: "" };
+        }
+        return { code: 1, stdout: "", stderr: "not here" };
+      },
+    },
+  });
+  await app.press("id:nav-settings");
+  await app.waitFor("id:settings-close", { timeout: 5000 });
+  await app.press("id:settings-nav-network");
+  await app.waitFor("id:proxy-import", { timeout: 5000 });
+  await app.press("id:proxy-import");
+  await app.waitUntil(() => storedSettings(app).proxy === "http://127.0.0.1:7890", { timeout: 8000 });
+});
+
 test("settings show the resolved download folder and engines", async () => {
   const app = await inApp(STUB);
   await app.press("label:切换深浅色");
@@ -166,6 +235,8 @@ test("settings show the resolved download folder and engines", async () => {
   await app.press("id:settings-nav-network");
   await app.waitFor("text:aria2c", { timeout: 5000 });
   expect(app.texts()).toContain("curl");
+  await app.waitFor("id:proxy-import", { timeout: 5000 });
+  await app.waitFor("id:settings-restart", { timeout: 5000 });
   await app.press("id:settings-nav-about");
   await app.waitFor("id:about-aria2-license", { timeout: 5000 });
   await app.waitFor("id:about-openssl-license", { timeout: 5000 });

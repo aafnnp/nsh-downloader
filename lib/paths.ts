@@ -1,4 +1,5 @@
 import { mkdir, readdir, rmdir, stat, unlink } from "fs/promises";
+import type { Dirent } from "fs/promises";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import processModule, { run } from "process";
@@ -190,4 +191,27 @@ export async function removePartsDir(path: string): Promise<void> {
   } catch {
     // Already gone.
   }
+}
+
+/** Deletes a file, or a folder with everything under it. A missing path is fine. */
+export async function removeTree(path: string): Promise<void> {
+  try {
+    // A link goes itself here, never what it points at.
+    await unlink(path);
+    return;
+  } catch {
+    // A folder refuses to unlink: empty it first, then remove it.
+  }
+  let entries: Dirent[] = [];
+  try {
+    entries = await readdir(path, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) await removeTree(child);
+    else await removeIfPresent(child);
+  }
+  await rmdir(path).catch(() => undefined);
 }

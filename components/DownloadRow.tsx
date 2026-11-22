@@ -3,9 +3,9 @@ import { Button, Checkbox, Progress } from "nsh/base";
 import { Menu, isAvailable as desktopMenu, type MenuItem } from "nsh/desktop";
 import { formatBytes, formatEta, formatPercent, formatSpeed, hostOf, percentOf } from "../lib/format";
 import { openDownloaded, revealInFolder } from "../lib/paths";
+import { confirmRemove } from "../lib/removeTasks";
 import {
   pause,
-  remove,
   resume,
   retry,
   selectOnly,
@@ -151,7 +151,7 @@ function contextMenu(item: Item): MenuItem[] {
       onSelect: () => void revealInFolder(item.torrent ? item.dir : `${item.dir}/${item.filename}`),
     },
     { type: "separator" },
-    { label: "移除", onSelect: () => remove(item.id) },
+    { label: "移除…", onSelect: () => void confirmRemove([item.id]) },
   ];
 }
 
